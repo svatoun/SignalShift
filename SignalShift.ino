@@ -35,7 +35,7 @@ void setupShiftPWM() {
 
   pinMode(2, INPUT);
 
-  ShiftPWM.SetAmountOfRegisters(4);
+  ShiftPWM.SetAmountOfRegisters(8);
   ShiftPWM.SetPinGrouping(1); //This is the default, but I added here to demonstrate how to use the funtion
   ShiftPWM.Start(pwmFrequency,maxBrightness);
   ShiftPWM.SetAll(0);
@@ -135,7 +135,7 @@ const int maxOutputsPerMast = 10;
 /**
  * Maximum number of outputs. This value does not affect the CV layout, but is used as a dimension of status arrays.
  */
-const int NUM_OUTPUTS = 32;
+const int NUM_OUTPUTS = 64;
 
 /**
  * Maximum number of signal masts supported by a single decoder.
@@ -284,9 +284,7 @@ byte signalMastDefaultAspectIdx[NUM_SIGNAL_MAST] = { 255, 255, 255, 255, 255, 25
 
 byte lightState[NUM_OUTPUTS] = { 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 };
 byte bublState[NUM_OUTPUTS] = { 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 };
-int lightCounter[NUM_OUTPUTS] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 unsigned long lightStartTimeBubl[NUM_OUTPUTS] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-unsigned long lightElapsedTimeBubl[NUM_OUTPUTS] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 byte signalMastLastCode[NUM_SIGNAL_MAST]    = { 255, 255, 255, 255, 255, 255, 255, 255 };   // last code
 unsigned long signalMastLastTime[NUM_SIGNAL_MAST]    = { 0, 0, 0, 0, 0, 0, 0, 0 };   // last time
@@ -496,11 +494,7 @@ void initLocalVariables() {
   rocoAddress = Dcc.getCV(CV_ROCO_ADDRESS);
 
   fadeRate = Dcc.getCV(CV_FADE_RATE);
-
-  fadeRate = fadeRate & 0x07;
-  for (int i = 0; i < 11; i++) {
-    fadeTimeLight[i] = FADE_TIME_LIGHT[i] * fadeRate;
-  }
+  initializeFadeTime();
 
   numSignalNumber = Dcc.getCV(CV_NUM_SIGNAL_NUMBER);
   aspectLag = Dcc.getCV(CV_ASPECT_LAG);
@@ -508,6 +502,13 @@ void initLocalVariables() {
 
   initLocalVariablesSignalMast();
 
+}
+
+void initializeFadeTime() {
+  fadeRate = fadeRate & 0x07;
+  for (int i = 0; i < 11; i++) {
+    fadeTimeLight[i] = FADE_TIME_LIGHT[i] * fadeRate;
+  }
 }
 
 /**********************************************************************************
@@ -585,17 +586,22 @@ void initLocalVariablesSignalMast() {
   }
 }
 
+int currentBulbTimeSpan = -1;
+
+int timeElapsedForBulb(byte nrOutput) {
+  unsigned long span = currentTime - lightStartTimeBubl[nrOutput];
+  if (span >= INT16_MAX) {
+    return currentBulbTimeSpan = INT16_MAX;
+  } else {
+    return currentBulbTimeSpan = (int)span;
+  }
+}
+
 
 /**********************************************************************************
  *
  */
 void processOutputLight(byte nrOutput) {
-
-  lightElapsedTimeBubl[nrOutput] = currentTime - lightStartTimeBubl[nrOutput];
-
-  if (lightElapsedTimeBubl[nrOutput] > 0xFFFFFFF0) {
-    lightElapsedTimeBubl[nrOutput] = 0 ;  
-  }
 
   switch (bublState[nrOutput]) {
   case BUBL_ON:
@@ -2692,9 +2698,8 @@ void changeLightState(byte lightOutput, byte newState) {
  *
  */
 void processBublOn(byte nrOutput) {
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  if (timeElapsedForBulb(nrOutput) > fadeTimeLight[10]) {
     ShiftPWM.SetOne(nrOutput, maxBrightness);
-    lightCounter[nrOutput] = 0;
     return;
   }
 
@@ -2705,9 +2710,8 @@ void processBublOn(byte nrOutput) {
  *
  */
 void processBublOff(byte nrOutput) {
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  if (timeElapsedForBulb(nrOutput) > fadeTimeLight[10]) {
     ShiftPWM.SetOne(nrOutput, minBrightness);
-    lightCounter[nrOutput] = 0;
     return;
   }
 
@@ -2718,15 +2722,14 @@ void processBublOff(byte nrOutput) {
  *
  */
 void processBublBlinkingOn54(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
 
     ShiftPWM.SetOne(nrOutput, maxBrightness);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_54) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_54) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_54_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2738,15 +2741,14 @@ void processBublBlinkingOn54(byte nrOutput) {
  *
  */
 void processBublBlinkingOn108(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
 
     ShiftPWM.SetOne(nrOutput, maxBrightness);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_108) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_108) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_108_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2758,15 +2760,14 @@ void processBublBlinkingOn108(byte nrOutput) {
  *
  */
 void processBublBlinkingOn45(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
 
     ShiftPWM.SetOne(nrOutput, maxBrightness);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_45) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_45) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_45_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2778,15 +2779,14 @@ void processBublBlinkingOn45(byte nrOutput) {
  *
  */
 void processBublBlinkingOn22(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
 
     ShiftPWM.SetOne(nrOutput, maxBrightness);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_22) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_22) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_22_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2798,15 +2798,14 @@ void processBublBlinkingOn22(byte nrOutput) {
  *
  */
 void processBublBlinkingOff54(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
 
     ShiftPWM.SetOne(nrOutput, minBrightness);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_54) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_54) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_54_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;      
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2818,15 +2817,14 @@ void processBublBlinkingOff54(byte nrOutput) {
  *
  */
 void processBublBlinkingOff108(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
 
     ShiftPWM.SetOne(nrOutput, minBrightness);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_108) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_108) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_108_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2838,15 +2836,14 @@ void processBublBlinkingOff108(byte nrOutput) {
  *
  */
 void processBublBlinkingOff45(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (timeElapsedForBulb(nrOutput) > fadeTimeLight[10]) {
 
     ShiftPWM.SetOne(nrOutput, minBrightness);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_45) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_45) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_45_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2858,15 +2855,14 @@ void processBublBlinkingOff45(byte nrOutput) {
  *
  */
 void processBublBlinkingOff22(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
 
     ShiftPWM.SetOne(nrOutput, minBrightness);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_22) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_22) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_22_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2882,16 +2878,19 @@ void processFadeOn(byte nrOutput) {
   int idx = 0;
   int limit = (sizeof(fadeTimeLight) / sizeof(fadeTimeLight[0]));
 
-  for (idx = 0; idx < limit && lightElapsedTimeBubl[nrOutput] > fadeTimeLight[idx]; idx++) ;
+  int elapsed = timeElapsedForBulb(nrOutput);
+  for (idx = 0; idx < limit && elapsed > fadeTimeLight[idx]; idx++) ;
   int span = (maxBrightness - minBrightness);
   int pwm = idx >= limit ? maxBrightness : ((span * FADE_COUNTER_LIGHT_1[idx]) / FADE_COUNTER_LIGHT_2[idx]) + minBrightness;
 
   ShiftPWM.SetOne(nrOutput, pwm);
 
-//  Serial.print("Fade ON, idx="); Serial.print(idx); Serial.print(", counters: "); 
-//  Serial.print(FADE_COUNTER_LIGHT_1[idx]); Serial.print("/"); Serial.print(FADE_COUNTER_LIGHT_2[idx]); 
-//  Serial.print(", time="); Serial.print(lightElapsedTimeBubl[nrOutput]);
-//  Serial.print(" pwm="); Serial.println(pwm);
+ /*
+  Serial.print("Fade ON, idx="); Serial.print(idx); Serial.print(", counters: "); 
+  Serial.print(FADE_COUNTER_LIGHT_1[idx]); Serial.print("/"); Serial.print(FADE_COUNTER_LIGHT_2[idx]); 
+  Serial.print(", time="); Serial.print(elapsed);
+  Serial.print(" pwm="); Serial.println(pwm);
+*/
 
 /*
   if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
@@ -3023,7 +3022,8 @@ void processFadeOn(byte nrOutput) {
 void processFadeOff(byte nrOutput) {
   int idx;
   int limit = (sizeof(fadeTimeLight) / sizeof(fadeTimeLight[0]));
-  for (idx = 0; idx < limit && lightElapsedTimeBubl[nrOutput] > fadeTimeLight[idx]; idx++) ;
+  int elapsed = timeElapsedForBulb(nrOutput);
+  for (idx = 0; idx < limit && elapsed > fadeTimeLight[idx]; idx++) ;
   
   int span = (maxBrightness - minBrightness);
   int pwm = idx >= limit ? minBrightness : maxBrightness - ((span * FADE_COUNTER_LIGHT_1[idx]) / FADE_COUNTER_LIGHT_2[idx]);
@@ -3240,10 +3240,7 @@ void notifyCVChange(uint16_t CV, uint8_t Value) {
 
   if (CV == CV_FADE_RATE) {
     fadeRate = Value;
-    fadeRate = fadeRate & 0x07;
-    for (int i = 0; i < 11; i++) {
-      fadeTimeLight[i] = FADE_TIME_LIGHT[i] * fadeRate;
-    }
+    initializeFadeTime();
     return ;
   }
 
