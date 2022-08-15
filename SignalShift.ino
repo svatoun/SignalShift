@@ -4,6 +4,8 @@
 #include "Arduino.h"
 #include <NmraDcc.h>
 
+#include "Common.h"
+
 const byte ShiftPWM_dataPin = 11;
 const byte ShiftPWM_clockPin = 13;
 
@@ -342,12 +344,19 @@ void setup() {
 
   initLocalVariables();
   Serial.println("Setup Done.");
+
+  ModuleChain::invokeAll(initialize);
+
+  initTerminal();
+  setupTerminal();
 }
 
 /**************************************************************************
  * Main loop.
  */
 void loop() {
+  processTerminal();
+
   currentTime = millis();
 
   Dcc.process();
