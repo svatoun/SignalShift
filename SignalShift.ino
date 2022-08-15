@@ -284,7 +284,7 @@ byte signalMastDefaultAspectIdx[NUM_SIGNAL_MAST] = { 255, 255, 255, 255, 255, 25
 
 byte lightState[NUM_OUTPUTS] = { 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 };
 byte bublState[NUM_OUTPUTS] = { 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 };
-unsigned long lightStartTimeBubl[NUM_OUTPUTS] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+unsigned int lightStartTimeBubl[NUM_OUTPUTS] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 byte signalMastLastCode[NUM_SIGNAL_MAST]    = { 255, 255, 255, 255, 255, 255, 255, 255 };   // last code
 unsigned long signalMastLastTime[NUM_SIGNAL_MAST]    = { 0, 0, 0, 0, 0, 0, 0, 0 };   // last time
@@ -589,7 +589,18 @@ void initLocalVariablesSignalMast() {
 int currentBulbTimeSpan = -1;
 
 int timeElapsedForBulb(byte nrOutput) {
-  unsigned long span = currentTime - lightStartTimeBubl[nrOutput];
+  unsigned int start = (lightStartTimeBubl[nrOutput] & 0xffff);
+  if (start == 0) {
+    return currentBulbTimeSpan = INT16_MAX;
+  }
+  unsigned int cur = currentTime & 0xffff;
+  int span;
+
+  if (start > cur) {
+    span = (unsigned int)(0x10000 - start) + cur;
+  } else {
+    span = cur - start;
+  }
   if (span >= INT16_MAX) {
     return currentBulbTimeSpan = INT16_MAX;
   } else {
@@ -2585,6 +2596,13 @@ void changeSignalMastLightBackwardState(int nrSignalMast, byte newState) {
 }
 
 
+void resetStartTime(int lightOutput) {
+  unsigned int v = currentTime & 0xffff;
+  if (v == 0) {
+    v++;
+  }
+  lightStartTimeBubl[lightOutput] = v;
+}
 
 /**********************************************************************************
  *
@@ -2604,7 +2622,7 @@ void changeLightState(byte lightOutput, byte newState) {
         || bublState[lightOutput] == BUBL_BLINKING_45_ON 
         || bublState[lightOutput] == BUBL_BLINKING_22_ON) {
       bublState[lightOutput] = BUBL_OFF;
-      lightStartTimeBubl[lightOutput] = millis();
+      resetStartTime(lightOutput);
       lightState[lightOutput] = LIGHT_OFF;
     } else { // (bublState[lightOutput] == BUBL_OFF || bublState[lightOutput] == BUBL_BLINKING_nnn_OFF)
       bublState[lightOutput] = BUBL_OFF;
@@ -2622,7 +2640,7 @@ void changeLightState(byte lightOutput, byte newState) {
       lightState[lightOutput] = LIGHT_ON;
     } else { // (bublState[lightOutput] == BUBL_OFF || bublState[lightOutput] == BUBL_BLINKING_nnn_OFF)
       bublState[lightOutput] = BUBL_ON;
-      lightStartTimeBubl[lightOutput] = millis();
+      resetStartTime(lightOutput);
       lightState[lightOutput] = LIGHT_ON;
     }
     break;
@@ -2634,11 +2652,11 @@ void changeLightState(byte lightOutput, byte newState) {
         || bublState[lightOutput] == BUBL_BLINKING_45_ON 
         || bublState[lightOutput] == BUBL_BLINKING_22_ON) {
       bublState[lightOutput] = BUBL_BLINKING_54_OFF;
-      lightStartTimeBubl[lightOutput] = millis();
+      resetStartTime(lightOutput);
       lightState[lightOutput] = LIGHT_BLINKING_54;
     } else { // (bublState[lightOutput] == BUBL_OFF || bublState[lightOutput] == BUBL_BLINKING_nnn_OFF)
       bublState[lightOutput] = BUBL_BLINKING_54_ON;
-      lightStartTimeBubl[lightOutput] = millis();
+      resetStartTime(lightOutput);
       lightState[lightOutput] = LIGHT_BLINKING_54;
     }
     break;
@@ -2650,11 +2668,11 @@ void changeLightState(byte lightOutput, byte newState) {
         || bublState[lightOutput] == BUBL_BLINKING_45_ON 
         || bublState[lightOutput] == BUBL_BLINKING_22_ON) {
       bublState[lightOutput] = BUBL_BLINKING_108_OFF;
-      lightStartTimeBubl[lightOutput] = millis();
+      resetStartTime(lightOutput);
       lightState[lightOutput] = LIGHT_BLINKING_108;
     } else { // (bublState[lightOutput] == BUBL_OFF || bublState[lightOutput] == BUBL_BLINKING_nnn_OFF)
       bublState[lightOutput] = BUBL_BLINKING_108_ON;
-      lightStartTimeBubl[lightOutput] = millis();
+      resetStartTime(lightOutput);
       lightState[lightOutput] = LIGHT_BLINKING_108;
     }
     break;
@@ -2666,11 +2684,11 @@ void changeLightState(byte lightOutput, byte newState) {
         || bublState[lightOutput] == BUBL_BLINKING_45_ON 
         || bublState[lightOutput] == BUBL_BLINKING_22_ON) {
       bublState[lightOutput] = BUBL_BLINKING_45_OFF;
-      lightStartTimeBubl[lightOutput] = millis();
+      resetStartTime(lightOutput);
       lightState[lightOutput] = LIGHT_BLINKING_45;
     } else { // (bublState[lightOutput] == BUBL_OFF || bublState[lightOutput] == BUBL_BLINKING_nnn_OFF)
       bublState[lightOutput] = BUBL_BLINKING_45_ON;
-      lightStartTimeBubl[lightOutput] = millis();
+      resetStartTime(lightOutput);
       lightState[lightOutput] = LIGHT_BLINKING_45;
     }
     break;
@@ -2682,11 +2700,11 @@ void changeLightState(byte lightOutput, byte newState) {
         || bublState[lightOutput] == BUBL_BLINKING_45_ON 
         || bublState[lightOutput] == BUBL_BLINKING_22_ON) {
       bublState[lightOutput] = BUBL_BLINKING_22_OFF;
-      lightStartTimeBubl[lightOutput] = millis();
+      resetStartTime(lightOutput);
       lightState[lightOutput] = LIGHT_BLINKING_22;
     } else { // (bublState[lightOutput] == BUBL_OFF || bublState[lightOutput] == BUBL_BLINKING_nnn_OFF)
       bublState[lightOutput] = BUBL_BLINKING_22_ON;
-      lightStartTimeBubl[lightOutput] = millis();
+      resetStartTime(lightOutput);
       lightState[lightOutput] = LIGHT_BLINKING_22;
     }
     break;
@@ -2729,7 +2747,7 @@ void processBublBlinkingOn54(byte nrOutput) {
 
     if (elapsed > BLINKING_TIME_54) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_54_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = currentTime;
+      resetStartTime(nrOutput);
     }
     return;
   }
@@ -2748,7 +2766,7 @@ void processBublBlinkingOn108(byte nrOutput) {
 
     if (elapsed > BLINKING_TIME_108) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_108_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = currentTime;
+      resetStartTime(nrOutput);
     }
     return;
   }
@@ -2767,7 +2785,7 @@ void processBublBlinkingOn45(byte nrOutput) {
 
     if (elapsed > BLINKING_TIME_45) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_45_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = currentTime;
+      resetStartTime(nrOutput);
     }
     return;
   }
@@ -2786,7 +2804,7 @@ void processBublBlinkingOn22(byte nrOutput) {
 
     if (elapsed > BLINKING_TIME_22) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_22_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = currentTime;
+      resetStartTime(nrOutput);
     }
     return;
   }
@@ -2805,7 +2823,7 @@ void processBublBlinkingOff54(byte nrOutput) {
 
     if (elapsed > BLINKING_TIME_54) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_54_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = currentTime;
+      resetStartTime(nrOutput);
     }
     return;
   }
@@ -2824,7 +2842,7 @@ void processBublBlinkingOff108(byte nrOutput) {
 
     if (elapsed > BLINKING_TIME_108) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_108_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = currentTime;
+      resetStartTime(nrOutput);
     }
     return;
   }
@@ -2843,7 +2861,7 @@ void processBublBlinkingOff45(byte nrOutput) {
 
     if (elapsed > BLINKING_TIME_45) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_45_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = currentTime;
+      resetStartTime(nrOutput);
     }
     return;
   }
@@ -2862,7 +2880,7 @@ void processBublBlinkingOff22(byte nrOutput) {
 
     if (elapsed > BLINKING_TIME_22) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_22_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = currentTime;
+      resetStartTime(nrOutput);
     }
     return;
   }
