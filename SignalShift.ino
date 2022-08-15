@@ -18,7 +18,6 @@ const uint8_t SW_VERSION = 12;
 
 /* ------------ Supported CV numbers ------------------ */
 const uint16_t CV_AUXILIARY_ACTIVATION = 2;
-const uint8_t VALUE_AUXILIARY_ACTIVATION = 12;  // change this value to restore CV defaults after upload sketch
 
 const uint16_t CV_DECODER_KEY = 15;
 const uint16_t CV_DECODER_LOCK = 16;
@@ -39,9 +38,7 @@ const uint8_t VALUE_DECODER_KEY = 0;        // unlocked decoder
 const uint8_t VALUE_DECODER_LOCK = 0;       // unlocked decoder
 
 const uint8_t VALUE_ROCO_ADDRESS = 1;      // 1 - ROCO address, 0 - LENZ address
-const uint16_t CV_FADE_RATE = 39;
 const uint8_t VALUE_FADE_RATE = 6;       // 0 - 7
-const uint16_t CV_NUM_SIGNAL_NUMBER = 40;
 const uint8_t VALUE_NUM_SIGNAL_NUMBER = 8;       // 1 - 8 
 const uint8_t VALUE_ASPECT_LAG = 1;       // 0 - 255   LAG × 0,128 s
 
@@ -95,7 +92,7 @@ int signalMastNumberIdx[40] ;
 int posNumber[40] ;
 
 //   connect                 A   B   C   D   E   F   G   H   I   J   K   L   M   N   O   P
-//   offset                  0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15
+  //   offset                  0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15
 const byte OUTPUT_PIN[] = { 19, 18,  9,  8,  7,  6,  5,  4, 10, 11, 12,  3, 14, 15, 16, 17 };
 //   pins                   A5  A4  D9  D8  D7  D6  D5  D4 D10 D11 D12  D3  A0  A1  A2  A3
 
@@ -207,7 +204,6 @@ byte lightState[NUM_OUTPUTS] = { 255, 255, 255, 255, 255, 255, 255, 255, 255, 25
 byte bublState[NUM_OUTPUTS] = { 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 };
 int lightCounter[NUM_OUTPUTS] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 unsigned long lightStartTimeBubl[NUM_OUTPUTS] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-unsigned long lightElapsedTimeBubl[NUM_OUTPUTS] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
 
 byte signalMastLastCode[NUM_SIGNAL_MAST]    = { 255, 255, 255, 255, 255, 255, 255, 255 };   // last code
 unsigned long signalMastLastTime[NUM_SIGNAL_MAST]    = { 0, 0, 0, 0, 0, 0, 0, 0 };   // last time
@@ -404,11 +400,7 @@ void initLocalVariables() {
   rocoAddress = Dcc.getCV(CV_ROCO_ADDRESS);
 
   fadeRate = Dcc.getCV(CV_FADE_RATE);
-
-  fadeRate = fadeRate & 0x07;
-  for (int i = 0; i < 11; i++) {
-    fadeTimeLight[i] = FADE_TIME_LIGHT[i] * fadeRate;
-  }
+  initializeFadeTime();
 
   numSignalNumber = Dcc.getCV(CV_NUM_SIGNAL_NUMBER);
   aspectLag = Dcc.getCV(CV_ASPECT_LAG);
@@ -416,6 +408,13 @@ void initLocalVariables() {
 
   initLocalVariablesSignalMast();
 
+}
+
+void initializeFadeTime() {
+  fadeRate = fadeRate & 0x07;
+  for (int i = 0; i < 11; i++) {
+    fadeTimeLight[i] = FADE_TIME_LIGHT[i] * fadeRate;
+  }
 }
 
 /**********************************************************************************
@@ -493,17 +492,22 @@ void initLocalVariablesSignalMast() {
   }
 }
 
+int currentBulbTimeSpan = -1;
+
+int timeElapsedForBulb(byte nrOutput) {
+  unsigned long span = currentTime - lightStartTimeBubl[nrOutput];
+  if (span >= INT16_MAX) {
+    return currentBulbTimeSpan = INT16_MAX;
+  } else {
+    return currentBulbTimeSpan = (int)span;
+  }
+}
+
 
 /**********************************************************************************
  *
  */
 void processOutputLight(byte nrOutput) {
-
-  lightElapsedTimeBubl[nrOutput] = currentTime - lightStartTimeBubl[nrOutput];
-
-  if (lightElapsedTimeBubl[nrOutput] > 0xFFFFFFF0) {
-    lightElapsedTimeBubl[nrOutput] = 0 ;  
-  }
 
   switch (bublState[nrOutput]) {
   case BUBL_ON:
@@ -2601,7 +2605,7 @@ void changeLightState(byte lightOutput, byte newState) {
  */
 void processBublOn(byte nrOutput) {
 
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+if (timeElapsedForBulb(nrOutput) > fadeTimeLight[10]) {
     digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
     lightCounter[nrOutput] = 0;
     return;
@@ -2615,7 +2619,7 @@ void processBublOn(byte nrOutput) {
  */
 void processBublOff(byte nrOutput) {
 
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  if (timeElapsedForBulb(nrOutput) > fadeTimeLight[10]) {
     digitalWrite(OUTPUT_PIN[nrOutput], LOW);
     lightCounter[nrOutput] = 0;
     return;
@@ -2628,15 +2632,14 @@ void processBublOff(byte nrOutput) {
  *
  */
 void processBublBlinkingOn54(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
 
     digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_54) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_54) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_54_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2648,15 +2651,14 @@ void processBublBlinkingOn54(byte nrOutput) {
  *
  */
 void processBublBlinkingOn108(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
 
     digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_108) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_108) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_108_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2668,15 +2670,14 @@ void processBublBlinkingOn108(byte nrOutput) {
  *
  */
 void processBublBlinkingOn45(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
 
     digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_45) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_45) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_45_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2688,15 +2689,14 @@ void processBublBlinkingOn45(byte nrOutput) {
  *
  */
 void processBublBlinkingOn22(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
 
     digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_22) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_22) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_22_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2708,15 +2708,14 @@ void processBublBlinkingOn22(byte nrOutput) {
  *
  */
 void processBublBlinkingOff54(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
 
     digitalWrite(OUTPUT_PIN[nrOutput], LOW);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_54) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_54) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_54_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;      
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2728,15 +2727,14 @@ void processBublBlinkingOff54(byte nrOutput) {
  *
  */
 void processBublBlinkingOff108(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
 
     digitalWrite(OUTPUT_PIN[nrOutput], LOW);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_108) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_108) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_108_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2748,15 +2746,14 @@ void processBublBlinkingOff108(byte nrOutput) {
  *
  */
 void processBublBlinkingOff45(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (timeElapsedForBulb(nrOutput) > fadeTimeLight[10]) {
 
     digitalWrite(OUTPUT_PIN[nrOutput], LOW);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_45) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_45) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_45_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2768,15 +2765,14 @@ void processBublBlinkingOff45(byte nrOutput) {
  *
  */
 void processBublBlinkingOff22(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
 
     digitalWrite(OUTPUT_PIN[nrOutput], LOW);
 
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_22) { // if (elapsedTimeBubl > BLINKING_TIME) {
+    if (elapsed > BLINKING_TIME_22) { // if (elapsedTimeBubl > BLINKING_TIME) {
       bublState[nrOutput] = BUBL_BLINKING_22_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+      lightStartTimeBubl[nrOutput] = currentTime;
     }
     return;
   }
@@ -2788,8 +2784,14 @@ void processBublBlinkingOff22(byte nrOutput) {
  *
  */
 void processFadeOn(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+ /*
+  Serial.print("Fade ON, idx="); Serial.print(idx); Serial.print(", counters: "); 
+  Serial.print(FADE_COUNTER_LIGHT_1[idx]); Serial.print("/"); Serial.print(FADE_COUNTER_LIGHT_2[idx]); 
+  Serial.print(", time="); Serial.print(elapsed);
+  Serial.print(" pwm="); Serial.println(pwm);
+*/
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[11]) {
       digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
     } else {
@@ -2799,7 +2801,7 @@ void processFadeOn(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[11]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[9]) {
+  } else if (elapsed > fadeTimeLight[9]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[10]) {
       digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
     } else {
@@ -2809,7 +2811,7 @@ void processFadeOn(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[10]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[8]) {
+  } else if (elapsed > fadeTimeLight[8]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[9]) {
       digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
     } else {
@@ -2819,7 +2821,7 @@ void processFadeOn(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[9]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[7]) {
+  } else if (elapsed > fadeTimeLight[7]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[8]) {
       digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
     } else {
@@ -2829,7 +2831,7 @@ void processFadeOn(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[8]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[6]) {
+  } else if (elapsed > fadeTimeLight[6]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[7]) {
       digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
     } else {
@@ -2839,7 +2841,7 @@ void processFadeOn(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[7]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[5]) {
+  } else if (elapsed > fadeTimeLight[5]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[6]) {
       digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
     } else {
@@ -2849,7 +2851,7 @@ void processFadeOn(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[6]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[4]) {
+  } else if (elapsed > fadeTimeLight[4]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[5]) {
       digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
     } else {
@@ -2859,7 +2861,7 @@ void processFadeOn(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[5]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[3]) {
+  } else if (elapsed > fadeTimeLight[3]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[4]) {
       digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
     } else {
@@ -2869,7 +2871,7 @@ void processFadeOn(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[4]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[2]) {
+  } else if (elapsed > fadeTimeLight[2]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[3]) {
       digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
     } else {
@@ -2879,7 +2881,7 @@ void processFadeOn(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[3]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[1]) {
+  } else if (elapsed > fadeTimeLight[1]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[2]) {
       digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
     } else {
@@ -2889,7 +2891,7 @@ void processFadeOn(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[2]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[0]) {
+  } else if (elapsed > fadeTimeLight[0]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[1]) {
       digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
     } else {
@@ -2917,7 +2919,21 @@ void processFadeOn(byte nrOutput) {
  */
 void processFadeOff(byte nrOutput) {
 
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
+  int idx;
+  int limit = (sizeof(fadeTimeLight) / sizeof(fadeTimeLight[0]));
+/*  
+  for (idx = 0; idx < limit && elapsed > fadeTimeLight[idx]; idx++) ;
+
+  int span = (maxBrightness - minBrightness);
+  int pwm = idx >= limit ? minBrightness : maxBrightness - ((span * FADE_COUNTER_LIGHT_1[idx]) / FADE_COUNTER_LIGHT_2[idx]);
+*/
+
+//  Serial.print("Fade OFF, idx="); Serial.print(idx); Serial.print(", counters: "); 
+//  Serial.print(FADE_COUNTER_LIGHT_1[idx]); Serial.print("/"); Serial.print(FADE_COUNTER_LIGHT_2[idx]); 
+//  Serial.print(", time="); Serial.print(lightElapsedTimeBubl[nrOutput]);
+//  Serial.print(" pwm="); Serial.println(pwm);
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > fadeTimeLight[10]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[11]) {
       digitalWrite(OUTPUT_PIN[nrOutput], LOW);
     } else {
@@ -2927,7 +2943,7 @@ void processFadeOff(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[11]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[9]) {
+  } else if (elapsed > fadeTimeLight[9]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[10]) {
       digitalWrite(OUTPUT_PIN[nrOutput], LOW);
     } else {
@@ -2937,7 +2953,7 @@ void processFadeOff(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[10]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[8]) {
+  } else if (elapsed > fadeTimeLight[8]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[9]) {
       digitalWrite(OUTPUT_PIN[nrOutput], LOW);
     } else {
@@ -2947,7 +2963,7 @@ void processFadeOff(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[9]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[7]) {
+  } else if (elapsed > fadeTimeLight[7]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[8]) {
       digitalWrite(OUTPUT_PIN[nrOutput], LOW);
     } else {
@@ -2957,7 +2973,7 @@ void processFadeOff(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[8]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[6]) {
+  } else if (elapsed > fadeTimeLight[6]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[7]) {
       digitalWrite(OUTPUT_PIN[nrOutput], LOW);
     } else {
@@ -2967,7 +2983,7 @@ void processFadeOff(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[7]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[5]) {
+  } else if (elapsed > fadeTimeLight[5]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[6]) {
       digitalWrite(OUTPUT_PIN[nrOutput], LOW);
     } else {
@@ -2977,7 +2993,7 @@ void processFadeOff(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[6]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[4]) {
+  } else if (elapsed > fadeTimeLight[4]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[5]) {
       digitalWrite(OUTPUT_PIN[nrOutput], LOW);
     } else {
@@ -2987,7 +3003,7 @@ void processFadeOff(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[5]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[3]) {
+  } else if (elapsed > fadeTimeLight[3]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[4]) {
       digitalWrite(OUTPUT_PIN[nrOutput], LOW);
     } else {
@@ -2997,7 +3013,7 @@ void processFadeOff(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[4]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[2]) {
+  } else if (elapsed > fadeTimeLight[2]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[3]) {
       digitalWrite(OUTPUT_PIN[nrOutput], LOW);
     } else {
@@ -3007,7 +3023,7 @@ void processFadeOff(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[3]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[1]) {
+  } else if (elapsed > fadeTimeLight[1]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[2]) {
       digitalWrite(OUTPUT_PIN[nrOutput], LOW);
     } else {
@@ -3017,7 +3033,7 @@ void processFadeOff(byte nrOutput) {
     if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[2]) {
       lightCounter[nrOutput] = 0;
     }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[0]) {
+  } else if (elapsed > fadeTimeLight[0]) {
     if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[1]) {
       digitalWrite(OUTPUT_PIN[nrOutput], LOW);
     } else {
@@ -3111,10 +3127,7 @@ void notifyCVChange(uint16_t CV, uint8_t Value) {
 
   if (CV == CV_FADE_RATE) {
     fadeRate = Value;
-    fadeRate = fadeRate & 0x07;
-    for (int i = 0; i < 11; i++) {
-      fadeTimeLight[i] = FADE_TIME_LIGHT[i] * fadeRate;
-    }
+    initializeFadeTime();
     return ;
   }
 
