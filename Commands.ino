@@ -4,7 +4,12 @@
 boolean handleSignals(ModuleCmd cmd);
 ModuleChain signals("signals", 0, &handleSignals);
 
-void commandClear() {}
+extern void commandReset();
+
+void commandClear() {
+  setFactoryDefault();
+  commandReset();
+}
 
 void commandSetSignal() {
   int nMast = nextNumber();

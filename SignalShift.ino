@@ -242,6 +242,24 @@ const int FADE_COUNTER_LIGHT_2[11] = { /* -1 */ 1, 10, 7, 4, 3, 2, 2, 3, 4, 7, 1
 unsigned int fadeTimeLight[11] = { } ;
 
 typedef byte SingleOutputForAllMasts[NUM_SIGNAL_MAST];
+typedef byte SignalOutputsSingleMast[maxOutputsPerMast];
+
+SignalOutputsSingleMast mastOutputConfiguration[NUM_SIGNAL_MAST];
+
+struct MastConfig {
+  byte  outputs[maxOutputsPerMast];
+  byte  signalSet;
+  byte  defaultAspect;
+  byte  numberOfAddresses;
+
+  MastConfig(const byte (&aOutputs)[maxOutputsPerMast], byte aSignalSet, byte aDefaultAspect, byte aNumberOfAddresses) : signalSet(aSignalSet), defaultAspect(aDefaultAspect), numberOfAddresses(aNumberOfAddresses) {
+    memcpy(outputs, aOutputs, sizeof(outputs));
+  }
+
+  MastConfig(const MastConfig& other) : signalSet(other.signalSet), defaultAspect(other.defaultAspect), numberOfAddresses(other.numberOfAddresses) {
+    memcpy(outputs, other.outputs, sizeof(outputs));
+  }
+};
 
 byte signalMastLightYellowUpperOutput[NUM_SIGNAL_MAST] = { 0, 5, 10, 15, 20, 25, ONA, ONA };   // yellow upper
 byte signalMastLightGreenOutput[NUM_SIGNAL_MAST]       = { 1, 6, 11, 16, 21, 26, ONA, ONA };   // green
@@ -410,60 +428,38 @@ const CVPair FactoryDefaultCVs[] = {
     { CV_PROD_ID_4, VALUE_PROD_ID_4 },
   };
 
+const uint8_t factorySignalMastOutputs[] PROGMEM = {      
+    0,   1,   2,  3, 4, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 0
+    5,   6,   7,  8, 9, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 1
+    10,  11,  12, 13, 14, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 2
+    15,   16,   17, 18, 19, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 3
+    20,   21,   22, 23, 24, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 4
+    25,  26,  27, 28, 29, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 5
+    ONA,  ONA,  ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 6
+    ONA,  ONA,  ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 5   // signal mast 7
+} ;
+
+static_assert (sizeof(MastConfig) == SEGMENT_SIZE, "Inconsistency between MastConfig and init data");
+
 void setFactoryDefault() {
 
   uint8_t FactoryDefaultCVSize = sizeof(FactoryDefaultCVs) / sizeof(CVPair);
 
-  if (Dcc.isSetCVReady()) {
-    for (uint16_t i = 0; i < FactoryDefaultCVSize; i++) {
-      Dcc.setCV(FactoryDefaultCVs[i].CV, FactoryDefaultCVs[i].Value);
-    }
+  for (uint16_t i = 0; i < FactoryDefaultCVSize; i++) {
+    Dcc.setCV(FactoryDefaultCVs[i].CV, FactoryDefaultCVs[i].Value);
   }
 
-  struct MastConfig {
-    byte  outputs[maxOutputsPerMast];
-    byte  signalSet;
-    byte  numberOfAddresses;
+  int cvNumber = START_CV_OUTPUT;
+  for (int i = 0; i < sizeof(factorySignalMastOutputs); i++, cvNumber++) {
+    Dcc.setCV(cvNumber, pgm_read_byte_near(factorySignalMastOutputs + i));
+  }
 
-    MastConfig(const byte (&aOutputs)[maxOutputsPerMast], byte aSignalSet, byte aNumberOfAddresses) : signalSet(aSignalSet), numberOfAddresses(aNumberOfAddresses){
-      memcpy(outputs, aOutputs, sizeof(outputs));
-    }
-  };
-
-  MastConfig signalMasts2[] = {
-    MastConfig( { 0,   1,   2,  3, 4, ONA, ONA, ONA, ONA, ONA }, 0, 5),  // signal mast 0
-  };
-
-  uint8_t signalMasts[] = {      
-      0,   1,   2,  3, 4, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 0
-      5,   6,   7,  8, 9, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 1
-      10,  11,  12, 13, 14, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 2
-      15,   16,   17, 18, 19, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 3
-      20,   21,   22, 23, 24, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 4
-      25,  26,  27, 28, 29, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 5
-      ONA,  ONA,  ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 6
-      ONA,  ONA,  ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 5   // signal mast 7
-  } ;
+  uint16_t OutputCV = START_CV_ASPECT_TABLE ;
   
-  if (Dcc.isSetCVReady()) {
-
-    uint16_t OutputCV ;
-    
-    for (uint16_t i = 0; i < (NUM_SIGNAL_MAST * SEGMENT_SIZE); i++) {
-      OutputCV = START_CV_OUTPUT + i ;
-      Dcc.setCV(OutputCV, signalMasts[i]);
-    }
-  }
-
-  if (Dcc.isSetCVReady()) {
-
-    uint16_t OutputCV = START_CV_ASPECT_TABLE ;
-    
-    for (uint16_t i = 0; i < NUM_SIGNAL_MAST; i++) {
-      for (uint16_t j = 0; j < 32; j++) {
-        Dcc.setCV(OutputCV, j);
-        OutputCV++ ;
-      }
+  for (uint16_t i = 0; i < NUM_SIGNAL_MAST; i++) {
+    for (uint16_t j = 0; j < 32; j++) {
+      Dcc.setCV(OutputCV, j);
+      OutputCV++ ;
     }
   }
 
