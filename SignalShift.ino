@@ -186,17 +186,6 @@ SignalSet signalMastSignalSet[NUM_SIGNAL_MAST]    = { SIGNAL_SET_SZDC_BASIC, SIG
 
 byte signalMastNumberAddress[NUM_SIGNAL_MAST]    = { 1, 1, 1, 1, 1, 1, 1, 1 };   // number of address
 
-byte signalMastLightYellowUpperState[NUM_SIGNAL_MAST] = { 255, 255, 255, 255, 255, 255, 255, 255 };      // yellow upper
-byte signalMastLightGreenState[NUM_SIGNAL_MAST]       = { 255, 255, 255, 255, 255, 255, 255, 255 };      // green
-byte signalMastLightRedState[NUM_SIGNAL_MAST]         = { 255, 255, 255, 255, 255, 255, 255, 255 };      // red
-byte signalMastLightLunarState[NUM_SIGNAL_MAST]       = { 255, 255, 255, 255, 255, 255, 255, 255 };      // lunar
-byte signalMastLightYellowLowerState[NUM_SIGNAL_MAST] = { 255, 255, 255, 255, 255, 255, 255, 255 };      // yellow lower
-byte signalMastLightBlueState[NUM_SIGNAL_MAST]        = { 255, 255, 255, 255, 255, 255, 255, 255 };      // blue
-byte signalMastLightGreenStripState[NUM_SIGNAL_MAST]  = { 255, 255, 255, 255, 255, 255, 255, 255 };      // green strip
-byte signalMastLightYellowStripState[NUM_SIGNAL_MAST] = { 255, 255, 255, 255, 255, 255, 255, 255 };      // yellow strip
-byte signalMastLightLunarLowerState[NUM_SIGNAL_MAST]  = { 255, 255, 255, 255, 255, 255, 255, 255 };      // lunar lower
-byte signalMastLightBackwardState[NUM_SIGNAL_MAST]    = { 255, 255, 255, 255, 255, 255, 255, 255 };      // backward
-
 byte signalMastCurrentAspect[NUM_SIGNAL_MAST] = { 255, 255, 255, 255, 255, 255, 255, 255 };
 byte signalMastDefaultAspectIdx[NUM_SIGNAL_MAST] = { 255, 255, 255, 255, 255, 255, 255, 255 };
 
@@ -2315,38 +2304,16 @@ void signalMastChangeAspectCsdMechanical(int nrSignalMast, byte newAspect) {
  *
  */
 void changeSignalMastLightYellowUpperState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightYellowUpperState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightYellowUpperOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightYellowUpperState[nrSignalMast] = newState;
-
   changeLightState(signalMastLightYellowUpperOutput[nrSignalMast],
-      signalMastLightYellowUpperState[nrSignalMast]);
+      newState);
 }
 
 /**********************************************************************************
  *
  */
 void changeSignalMastLightGreenState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightGreenState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightGreenOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightGreenState[nrSignalMast] = newState;
-
   changeLightState(signalMastLightGreenOutput[nrSignalMast],
-      signalMastLightGreenState[nrSignalMast]);
+      newState);
 }
 
 /**********************************************************************************
@@ -2354,151 +2321,64 @@ void changeSignalMastLightGreenState(int nrSignalMast, byte newState) {
  */
 void changeSignalMastLightRedState(int nrSignalMast, byte newState) {
 
-  if (signalMastLightRedState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightRedOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightRedState[nrSignalMast] = newState;
-
   changeLightState(signalMastLightRedOutput[nrSignalMast],
-      signalMastLightRedState[nrSignalMast]);
+      newState);
 }
 
 /**********************************************************************************
  *
  */
 void changeSignalMastLightLunarState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightLunarState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightLunarOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightLunarState[nrSignalMast] = newState;
-
   changeLightState(signalMastLightLunarOutput[nrSignalMast],
-      signalMastLightLunarState[nrSignalMast]);
+      newState);
 }
 
 /**********************************************************************************
  *
  */
 void changeSignalMastLightYellowLowerState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightYellowLowerState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightYellowLowerOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightYellowLowerState[nrSignalMast] = newState;
-
   changeLightState(signalMastLightYellowLowerOutput[nrSignalMast],
-      signalMastLightYellowLowerState[nrSignalMast]);
+      newState);
 }
 
 /**********************************************************************************
  *
  */
 void changeSignalMastLightBlueState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightBlueState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightBlueOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightBlueState[nrSignalMast] = newState;
-
   changeLightState(signalMastLightBlueOutput[nrSignalMast],
-      signalMastLightBlueState[nrSignalMast]);
+      newState);
 }
 
 /**********************************************************************************
  *
  */
 void changeSignalMastLightGreenStripState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightGreenStripState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightGreenStripOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightGreenStripState[nrSignalMast] = newState;
-
   changeLightState(signalMastLightGreenStripOutput[nrSignalMast],
-      signalMastLightGreenStripState[nrSignalMast]);
+      newState);
 }
 
 /**********************************************************************************
  *
  */
 void changeSignalMastLightYellowStripState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightYellowStripState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightYellowStripOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightYellowStripState[nrSignalMast] = newState;
-
   changeLightState(signalMastLightYellowStripOutput[nrSignalMast],
-      signalMastLightYellowStripState[nrSignalMast]);
+      newState);
 }
 
 /**********************************************************************************
  *
  */
 void changeSignalMastLightLunarLowerState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightLunarLowerState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightLunarLowerOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightLunarLowerState[nrSignalMast] = newState;
-
   changeLightState(signalMastLightLunarLowerOutput[nrSignalMast],
-      signalMastLightLunarLowerState[nrSignalMast]);
+      newState);
 }
 
 /**********************************************************************************
  *
  */
 void changeSignalMastLightBackwardState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightBackwardState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightBackwardOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightBackwardState[nrSignalMast] = newState;
-
   changeLightState(signalMastLightBackwardOutput[nrSignalMast],
-      signalMastLightBackwardState[nrSignalMast]);
+      newState);
 }
 
 
@@ -2514,7 +2394,9 @@ void resetStartTime(int lightOutput) {
  *
  */
 void changeLightState(byte lightOutput, byte newState) {
-
+  if (lightOutput >= NUM_OUTPUTS) {
+    return;
+  }
   if (lightState[lightOutput] == newState) {
     return;
   }
