@@ -14,57 +14,84 @@
 #include "Arduino.h"
 #include <NmraDcc.h>
 
+#include "Common.h"
+
+// ------- Diagnostic setup -----------
+const boolean debugFadeOnOff = false;
+const boolean debugLightFlip = false;
+const boolean debugAspects = false;
+
 const uint8_t SW_VERSION = 12;
 
+// --------- HARDWARE PIN WIRING / SETUP --------------------
+const byte ACK_BUSY_PIN = 10;
+
+// ShiftPWM HW setup setup
+const byte ShiftPWM_dataPin = 11;
+const byte ShiftPWM_clockPin = 13;
+const byte ShiftPWM_latchPin = 8;
+unsigned char maxBrightness = 255;
+unsigned char minBrightness = 0;
+unsigned char pwmFrequency = 100;
+const bool ShiftPWM_balanceLoad = false;
+const bool ShiftPWM_invertOutputs = true; 
+#define SHIFTPWM_USE_TIMER2
+
+// must be included after #define for timer
+#include <ShiftPWM.h> 
+
+/* ------------ Supported CV numbers ------------------ */
 const uint16_t CV_AUXILIARY_ACTIVATION = 2;
-const uint8_t VALUE_AUXILIARY_ACTIVATION = 12;  // change this value to restore CV defaults after upload sketch
-
 const uint16_t CV_DECODER_KEY = 15;
-const uint8_t VALUE_DECODER_KEY = 0;        // unlocked decoder
 const uint16_t CV_DECODER_LOCK = 16;
-const uint8_t VALUE_DECODER_LOCK = 0;       // unlocked decoder
-
 const uint16_t CV_ROCO_ADDRESS = 34;
-const uint8_t VALUE_ROCO_ADDRESS = 1;      // 1 - ROCO address, 0 - LENZ address
 const uint16_t CV_FADE_RATE = 39;
-const uint8_t VALUE_FADE_RATE = 6;       // 0 - 7
 const uint16_t CV_NUM_SIGNAL_NUMBER = 40;
-const uint8_t VALUE_NUM_SIGNAL_NUMBER = 8;       // 1 - 8 
 const uint16_t CV_ASPECT_LAG = 41;
-const uint8_t VALUE_ASPECT_LAG = 1;       // 0 - 255   LAG × 0,128 s
 
 const uint16_t CV_PROD_ID_1 = 47;
-const uint8_t VALUE_PROD_ID_1 = 1;              // productID #1  
 const uint16_t CV_PROD_ID_2 = 48;
-const uint8_t VALUE_PROD_ID_2 = 1;              // productID #2
 const uint16_t CV_PROD_ID_3 = 49;
-const uint8_t VALUE_PROD_ID_3 = 1;              // productID #3
 const uint16_t CV_PROD_ID_4 = 50;
+
+/* ------------- Default values for supported CVs ---------- */
+
+const uint8_t VALUE_AUXILIARY_ACTIVATION = 6;  // change this value to restore CV defaults after upload sketch
+const uint8_t VALUE_DECODER_KEY = 0;        // unlocked decoder
+const uint8_t VALUE_DECODER_LOCK = 0;       // unlocked decoder
+
+const uint8_t VALUE_ROCO_ADDRESS = 1;      // 1 - ROCO address, 0 - LENZ address
+const uint8_t VALUE_FADE_RATE = 2;       // 0 - 7
+const uint8_t VALUE_NUM_SIGNAL_NUMBER = 8;       // 1 - 8 
+const uint8_t VALUE_ASPECT_LAG = 1;       // 0 - 255   LAG × 0,128 s
+
+const uint8_t VALUE_PROD_ID_1 = 1;              // productID #1  
+const uint8_t VALUE_PROD_ID_2 = 1;              // productID #2
+const uint8_t VALUE_PROD_ID_3 = 1;              // productID #3
 const uint8_t VALUE_PROD_ID_4 = 4;              // productID #4
 
-const byte ACK_BUSY_PIN = 13;
+/**
+ * Maximum possible outputs (lights) for a single mast. The value here affects the CV layout: for each Mast,
+ * a consecutive CV list specifies physical outputs of individual Mast lights. Changing the value here will
+ * damage existing decoder configurations as the CVs will be shifted.
+ */
+const int maxOutputsPerMast = 10;
 
-const int NUM_OUTPUTS = 16;
-const int NUM_SIGNAL_MAST = 8;
+/**
+ * Maximum number of outputs. This value does not affect the CV layout, but is used as a dimension of status arrays.
+ */
+const int NUM_OUTPUTS = 80;
+
+const int NUM_8BIT_SHIFT_REGISTERS = (NUM_OUTPUTS + 7) / 8;
+
+/**
+ * Maximum number of signal masts supported by a single decoder.
+ */
+const int NUM_SIGNAL_MAST = 16;
 
 const int SEGMENT_SIZE = 13;
 
-const int IDX_LIGHT_0_YELLOW_UPPER = 0;
-const int IDX_LIGHT_1_GREEN        = 1;
-const int IDX_LIGHT_2_RED          = 2;
-const int IDX_LIGHT_3_LUNAR        = 3;
-const int IDX_LIGHT_4_YELLOW_LOWER = 4;
-const int IDX_LIGHT_5_BLUE         = 5;
-const int IDX_LIGHT_6_GREEN_STRIP  = 6;
-const int IDX_LIGHT_7_YELLOW_STRIP = 7;
-const int IDX_LIGHT_8_LUNAR_LOWER  = 8;
-const int IDX_LIGHT_9_BACKWARD     = 9;
-const int IDX_SIGNAL_SET           = 10;
-const int IDX_DEFAULT_ASPECT       = 11;
-const int IDX_NUMBER_OF_ADDRESS    = 12;
-
-const byte ONA           = 16 ; // OUTPUT_NOT_ASSIGNED
-
+const byte ONA           = NUM_OUTPUTS; // OUTPUT_NOT_ASSIGNED
 
 const uint16_t START_CV_OUTPUT = 128;
 const uint16_t END_CV_OUTPUT = START_CV_OUTPUT + (SEGMENT_SIZE * NUM_SIGNAL_MAST - 1);
@@ -80,82 +107,144 @@ int posNumber[40] ;
 
 //   connect                 A   B   C   D   E   F   G   H   I   J   K   L   M   N   O   P
 //   offset                  0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15
-const byte OUTPUT_PIN[] = { 19, 18,  9,  8,  7,  6,  5,  4, 10, 11, 12,  3, 14, 15, 16, 17 };
+//const byte OUTPUT_PIN[] = { 19, 18,  9,  8,  7,  6,  5,  4, 10, 11, 12,  3, 14, 15, 16, 17 };
 //   pins                   A5  A4  D9  D8  D7  D6  D5  D4 D10 D11 D12  D3  A0  A1  A2  A3
 
-const byte SIGNAL_SET_CSD_BASIC         = 0 ;   // ČSD basic signal set 
-const byte SIGNAL_SET_CSD_INTERMEDIATE  = 1 ;   // ČSD intermediate signal set 
-const byte SIGNAL_SET_CSD_EMBEDDED      = 2 ;   // ČSD embedded signal set 
-const byte SIGNAL_SET_SZDC_BASIC        = 3 ;   // SŽDC basic signal set 
-const byte SIGNAL_SET_CSD_MECHANICAL    = 4 ;   // ČSD mechanical signal set 
+// Signal sets defined in the decoder
+enum SignalSet : byte {
+  SIGNAL_SET_CSD_BASIC         = 0,  // ČSD basic signal set 
+  SIGNAL_SET_CSD_INTERMEDIATE  = 1,   // ČSD intermediate signal set 
+  SIGNAL_SET_CSD_EMBEDDED      = 2,   // ČSD embedded signal set 
+  SIGNAL_SET_SZDC_BASIC        = 3,   // SŽDC basic signal set 
+  SIGNAL_SET_CSD_MECHANICAL    = 4,   // ČSD mechanical signal set 
 
-const byte LIGHT_OFF          = 0;
-const byte LIGHT_ON           = 1;
-const byte LIGHT_BLINKING_54  = 2;
-const byte LIGHT_BLINKING_108 = 3;
-const byte LIGHT_BLINKING_45  = 4;
-const byte LIGHT_BLINKING_22  = 5;
+  _signal_set_last // must be last
+};
 
-const byte BUBL_OFF = 0;
-const byte BUBL_ON = 1;
-const byte BUBL_BLINKING_54_OFF = 2;
-const byte BUBL_BLINKING_108_OFF = 3;
-const byte BUBL_BLINKING_45_OFF = 4;
-const byte BUBL_BLINKING_22_OFF = 5;
-const byte BUBL_BLINKING_54_ON = 6;
-const byte BUBL_BLINKING_108_ON = 7;
-const byte BUBL_BLINKING_45_ON = 8;
-const byte BUBL_BLINKING_22_ON = 9;
+// Signs on an individual light. Fixed (on, off) and blinking.
+enum LightSign : byte {
+  inactive = 0x00,      // since initialized globals are zeroed after initializer till end of object
+  fixed = 0x01,
+  blinking54,
+  blinking108,
+  blinking45,
+  blinking22,
+
+  _lightsign_last   // must be last
+};
+
+#define LON (fixed)
+#define LOFF (fixed | 0x20)
+#define L(n) (n)
+#define B(n) (n | 0x10)
+
+
+/**
+ * Describes the state of a light output. Defined as a structure for
+ * easier access; the alternative would be a bit manipulation.
+ */
+struct LightFunction {
+  /**
+   * The sign signalled by the light. This field 
+   */
+  LightSign sign : 4;
+  static_assert (_lightsign_last <= 16, "Too many signs, must fit in 4 bits (LightFunction::sign)");
+
+  /**
+   * If true, the light alternates with a sign-specific period
+   */
+  boolean alternating : 1;
+
+  /**
+   * True to change the light towards OFF, false to change towards ON.
+   */
+  boolean off : 1;
+
+  /**
+   * If true, the light reached the on/off terminal state
+   */
+  boolean end : 1;
+
+  // Default initializer: output off(=true), final brightness (end=true), not alternating
+  LightFunction() : sign(inactive), alternating(false), off(true), end(true) {}
+
+  // Normal construction
+  LightFunction(LightSign sign, boolean alt, boolean initOff) : sign(sign), alternating(alt), off(initOff), end(false) {}
+
+  LightFunction(byte data) { *((byte*)(void*)this) = data; }
+
+  // Copy constructor for easy assignment; make fast assingment of the whole byte.
+  LightFunction(const LightFunction& f)  { *((byte*)(void*)this) = *((byte*)(void*)&f); }
+};
 
 const unsigned long BLINKING_TIME_54  =  556;
 const unsigned long BLINKING_TIME_108 =  278;
 const unsigned long BLINKING_TIME_45  =  667;
 const unsigned long BLINKING_TIME_22  = 1333;
 
+// PENDING: The brightness of LED is perceived non-lineraly by human eye. Revise the scale
+// here according to https://diarmuid.ie/blog/pwm-exponential-led-fading-on-arduino-or-other-platforms
 const byte FADE_TIME_LIGHT[11] = { 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66 } ;
-const int FADE_COUNTER_LIGHT_1[11] = { -1,  1, 1, 1, 1, 1, 1, 2, 3, 6, 9 };
-const int FADE_COUNTER_LIGHT_2[11] = { -1, 10, 7, 4, 3, 2, 2, 3, 4, 7, 10 };
+const int FADE_COUNTER_LIGHT_1[11] = { /* -1 */ 0,  1, 1, 1, 1, 1, 1, 2, 3, 6, 9 };
+const int FADE_COUNTER_LIGHT_2[11] = { /* -1 */ 1, 10, 7, 4, 3, 2, 2, 3, 4, 7, 10 };
 
+// Will be initialized at startup, and whenever fadeRate global changes. As fadeRate is max 7, the value nicely fits in 9 bits unsigned.
+unsigned int fadeTimeLight[11] = { } ;
 
-unsigned long fadeTimeLight[11] = { 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66 } ;
+struct MastConfig {
+  byte  outputs[maxOutputsPerMast];
+  byte  signalSet;
+  byte  defaultAspect;
+  byte  numberOfAddresses;
 
-byte signalMastLightYellowUpperOutput[NUM_SIGNAL_MAST] = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };   // yellow upper
-byte signalMastLightGreenOutput[NUM_SIGNAL_MAST]       = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };   // green
-byte signalMastLightRedOutput[NUM_SIGNAL_MAST]         = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };   // red
-byte signalMastLightLunarOutput[NUM_SIGNAL_MAST]       = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };   // lunar
-byte signalMastLightYellowLowerOutput[NUM_SIGNAL_MAST] = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };   // yellow lower
+  MastConfig(const byte (&aOutputs)[maxOutputsPerMast], byte aSignalSet, byte aDefaultAspect, byte aNumberOfAddresses) : signalSet(aSignalSet), defaultAspect(aDefaultAspect), numberOfAddresses(aNumberOfAddresses) {
+    memcpy(outputs, aOutputs, sizeof(outputs));
+  }
+
+  MastConfig(const MastConfig& other) : signalSet(other.signalSet), defaultAspect(other.defaultAspect), numberOfAddresses(other.numberOfAddresses) {
+    memcpy(outputs, other.outputs, sizeof(outputs));
+  }
+};
+
+byte signalMastLightYellowUpperOutput[NUM_SIGNAL_MAST] = { 0, 5, 10, 15, 20, 25, ONA, ONA };   // yellow upper
+byte signalMastLightGreenOutput[NUM_SIGNAL_MAST]       = { 1, 6, 11, 16, 21, 26, ONA, ONA };   // green
+byte signalMastLightRedOutput[NUM_SIGNAL_MAST]         = { 2, 7, 12, 17, 22, 27, ONA, ONA };   // red
+byte signalMastLightLunarOutput[NUM_SIGNAL_MAST]       = { 3, 8, 13, 18, 23, 28, ONA, ONA };   // lunar
+byte signalMastLightYellowLowerOutput[NUM_SIGNAL_MAST] = { 4, 9, 14, 19, 24, 29, ONA, ONA };   // yellow lower
 byte signalMastLightBlueOutput[NUM_SIGNAL_MAST]        = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };   // blue
 byte signalMastLightGreenStripOutput[NUM_SIGNAL_MAST]  = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };   // green strip
 byte signalMastLightYellowStripOutput[NUM_SIGNAL_MAST] = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };   // yellow strip
 byte signalMastLightLunarLowerOutput[NUM_SIGNAL_MAST]  = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };   // lunar lower
 byte signalMastLightBackwardOutput[NUM_SIGNAL_MAST]    = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };   // backward
 
-byte signalMastSignalSet[NUM_SIGNAL_MAST]    = { SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC };   // signal set
+typedef byte oneLightOutputs[NUM_SIGNAL_MAST];
+
+oneLightOutputs * lightConfiguration[maxOutputsPerMast] = {
+  &signalMastLightYellowUpperOutput,
+  &signalMastLightGreenOutput,
+  &signalMastLightRedOutput,
+  &signalMastLightLunarOutput,
+  &signalMastLightYellowLowerOutput,
+  &signalMastLightBlueOutput,
+  &signalMastLightGreenStripOutput,
+  &signalMastLightYellowStripOutput,
+  &signalMastLightLunarLowerOutput,
+  &signalMastLightBackwardOutput,
+};
+
+SignalSet signalMastSignalSet[NUM_SIGNAL_MAST]    = { SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC };   // signal set
 
 byte signalMastNumberAddress[NUM_SIGNAL_MAST]    = { 1, 1, 1, 1, 1, 1, 1, 1 };   // number of address
-
-byte signalMastLightYellowUpperState[NUM_SIGNAL_MAST] = { 255, 255, 255, 255, 255, 255, 255, 255 };      // yellow upper
-byte signalMastLightGreenState[NUM_SIGNAL_MAST]       = { 255, 255, 255, 255, 255, 255, 255, 255 };      // green
-byte signalMastLightRedState[NUM_SIGNAL_MAST]         = { 255, 255, 255, 255, 255, 255, 255, 255 };      // red
-byte signalMastLightLunarState[NUM_SIGNAL_MAST]       = { 255, 255, 255, 255, 255, 255, 255, 255 };      // lunar
-byte signalMastLightYellowLowerState[NUM_SIGNAL_MAST] = { 255, 255, 255, 255, 255, 255, 255, 255 };      // yellow lower
-byte signalMastLightBlueState[NUM_SIGNAL_MAST]        = { 255, 255, 255, 255, 255, 255, 255, 255 };      // blue
-byte signalMastLightGreenStripState[NUM_SIGNAL_MAST]  = { 255, 255, 255, 255, 255, 255, 255, 255 };      // green strip
-byte signalMastLightYellowStripState[NUM_SIGNAL_MAST] = { 255, 255, 255, 255, 255, 255, 255, 255 };      // yellow strip
-byte signalMastLightLunarLowerState[NUM_SIGNAL_MAST]  = { 255, 255, 255, 255, 255, 255, 255, 255 };      // lunar lower
-byte signalMastLightBackwardState[NUM_SIGNAL_MAST]    = { 255, 255, 255, 255, 255, 255, 255, 255 };      // backward
 
 byte signalMastCurrentAspect[NUM_SIGNAL_MAST] = { 255, 255, 255, 255, 255, 255, 255, 255 };
 byte signalMastDefaultAspectIdx[NUM_SIGNAL_MAST] = { 255, 255, 255, 255, 255, 255, 255, 255 };
 
-byte lightState[NUM_OUTPUTS] = { 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 };
-byte bublState[NUM_OUTPUTS] = { 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255 };
-int lightCounter[NUM_OUTPUTS] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-unsigned long lightStartTimeBubl[NUM_OUTPUTS] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
-unsigned long lightElapsedTimeBubl[NUM_OUTPUTS] = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0 };
+LightFunction bublState2[NUM_OUTPUTS] = {  };
+
+unsigned int lightStartTimeBubl[NUM_OUTPUTS] = {  };
 
 byte signalMastLastCode[NUM_SIGNAL_MAST]    = { 255, 255, 255, 255, 255, 255, 255, 255 };   // last code
-unsigned long signalMastLastTime[NUM_SIGNAL_MAST]    = { 0, 0, 0, 0, 0, 0, 0, 0 };   // last time
+unsigned long signalMastLastTime[NUM_SIGNAL_MAST]    = { };   // last time
 boolean signalMastCodeChanged[NUM_SIGNAL_MAST]    = { true, true, true, true, true, true, true, true };   // code changed
 
 int counterNrOutput = 0 ;
@@ -179,21 +268,29 @@ uint8_t fadeRate;
  * Setup Arduino.
  */
 void setup() {
+  Serial.begin(115200);
+  Serial.println("Booting...");
 
   // initialize the digital pins as an outputs
   pinMode(ACK_BUSY_PIN, OUTPUT);
   digitalWrite(ACK_BUSY_PIN, LOW);
 
-  for (int i = 0; i < NUM_OUTPUTS; i++) {
-    pinMode(OUTPUT_PIN[i], OUTPUT);
-    digitalWrite(OUTPUT_PIN[i], LOW);
-  }
-
+  setupShiftPWM();
+  Serial.println("setupShiftPWM Done.");
+//  for (int i = 0; i < NUM_OUTPUTS; i++) {
+//    pinMode(OUTPUT_PIN[i], OUTPUT);
+//    digitalWrite(OUTPUT_PIN[i], LOW);
+//  }
+//
   // Setup which External Interrupt, the Pin it's associated with that we're using and enable the Pull-Up
   Dcc.pin(0, 2, 1);
 
+  Serial.println("Dcc setup done.");
+
   // Call the main DCC Init function to enable the DCC Receiver
   Dcc.initAccessoryDecoder( MAN_ID_DIY, SW_VERSION, FLAGS_OUTPUT_ADDRESS_MODE, 0);
+
+  Serial.println("Accessory setup done.");
 
   uint8_t cvVersion = Dcc.getCV(CV_AUXILIARY_ACTIVATION);
   if (cvVersion != VALUE_AUXILIARY_ACTIVATION) {
@@ -201,13 +298,34 @@ void setup() {
   }
 
   initLocalVariables();
+  Serial.println("Setup Done.");
 
+  ModuleChain::invokeAll(initialize);
+
+  initTerminal();
+  setupTerminal();
 }
+
+void setupShiftPWM() {
+  // put your setup code here, to run once:
+  pinMode(13, OUTPUT);
+  pinMode(11, OUTPUT);
+  pinMode(8, OUTPUT);
+
+  pinMode(2, INPUT);
+
+  ShiftPWM.SetAmountOfRegisters(8);
+  ShiftPWM.SetPinGrouping(1); //This is the default, but I added here to demonstrate how to use the funtion
+  ShiftPWM.Start(pwmFrequency,maxBrightness);
+  ShiftPWM.SetAll(0);
+}
+
 
 /**************************************************************************
  * Main loop.
  */
 void loop() {
+  processTerminal();
 
   currentTime = millis();
 
@@ -224,7 +342,6 @@ void loop() {
   if (counterNrOutput >= NUM_OUTPUTS) {
     counterNrOutput = 0 ;
   }
-
 }
 
 /**************************************************************************
@@ -251,69 +368,61 @@ void notifyDccAccTurnoutOutput( uint16_t Addr, uint8_t Direction, uint8_t Output
 /**************************************************************************
  *
  */
-void setFactoryDefault() {
+struct CVPair {
+  const uint16_t CV;
+  const uint8_t Value;
+};
 
-  struct CVPair {
-    uint16_t CV;
-    uint8_t Value;
+const CVPair FactoryDefaultCVs[] = {
+    { CV_ACCESSORY_DECODER_ADDRESS_LSB, INIT_DECODER_ADDRESS },
+    { CV_ACCESSORY_DECODER_ADDRESS_MSB, 0 },
+    { CV_AUXILIARY_ACTIVATION, VALUE_AUXILIARY_ACTIVATION },
+    { CV_DECODER_KEY, VALUE_DECODER_KEY },
+    { CV_DECODER_LOCK, VALUE_DECODER_LOCK },
+
+    { CV_ROCO_ADDRESS, VALUE_ROCO_ADDRESS },
+    { CV_FADE_RATE, VALUE_FADE_RATE },
+    { CV_NUM_SIGNAL_NUMBER, VALUE_NUM_SIGNAL_NUMBER },
+    { CV_ASPECT_LAG, VALUE_ASPECT_LAG },
+    
+    { CV_PROD_ID_1, VALUE_PROD_ID_1 },
+    { CV_PROD_ID_2, VALUE_PROD_ID_2 },
+    { CV_PROD_ID_3, VALUE_PROD_ID_3 },
+    { CV_PROD_ID_4, VALUE_PROD_ID_4 },
   };
 
-  CVPair FactoryDefaultCVs[] = {
-      { CV_ACCESSORY_DECODER_ADDRESS_LSB, INIT_DECODER_ADDRESS },
-      { CV_ACCESSORY_DECODER_ADDRESS_MSB, 0 },
-      { CV_AUXILIARY_ACTIVATION, VALUE_AUXILIARY_ACTIVATION },
-      { CV_DECODER_KEY, VALUE_DECODER_KEY },
-      { CV_DECODER_LOCK, VALUE_DECODER_LOCK },
+const uint8_t factorySignalMastOutputs[] PROGMEM = {      
+    0,   1,   2,  3, 4, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 0
+    5,   6,   7,  8, 9, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 1
+    10,  11,  12, 13, 14, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 2
+    15,   16,   17, 18, 19, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 3
+    20,   21,   22, 23, 24, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 4
+    25,  26,  27, 28, 29, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 5
+    ONA,  ONA,  ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 6
+    ONA,  ONA,  ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 5   // signal mast 7
+} ;
 
-      { CV_ROCO_ADDRESS, VALUE_ROCO_ADDRESS },
-      { CV_FADE_RATE, VALUE_FADE_RATE },
-      { CV_NUM_SIGNAL_NUMBER, VALUE_NUM_SIGNAL_NUMBER },
-      { CV_ASPECT_LAG, VALUE_ASPECT_LAG },
-      
-      { CV_PROD_ID_1, VALUE_PROD_ID_1 },
-      { CV_PROD_ID_2, VALUE_PROD_ID_2 },
-      { CV_PROD_ID_3, VALUE_PROD_ID_3 },
-      { CV_PROD_ID_4, VALUE_PROD_ID_4 },
-    };
+static_assert (sizeof(MastConfig) == SEGMENT_SIZE, "Inconsistency between MastConfig and init data");
+
+void setFactoryDefault() {
 
   uint8_t FactoryDefaultCVSize = sizeof(FactoryDefaultCVs) / sizeof(CVPair);
 
-  if (Dcc.isSetCVReady()) {
-    for (uint16_t i = 0; i < FactoryDefaultCVSize; i++) {
-      Dcc.setCV(FactoryDefaultCVs[i].CV, FactoryDefaultCVs[i].Value);
-    }
+  for (uint16_t i = 0; i < FactoryDefaultCVSize; i++) {
+    Dcc.setCV(FactoryDefaultCVs[i].CV, FactoryDefaultCVs[i].Value);
   }
 
-  uint8_t signalMasts[] = {      
-      ONA,   0,   1, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 1,  // signal mast 0
-      ONA,   2,   3, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 1,  // signal mast 1
-      ONA,   4,   5, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 1,  // signal mast 2
-      ONA,   6,   7, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 1,  // signal mast 3
-      ONA,   8,   9, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 1,  // signal mast 4
-      ONA,  10,  11, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 1,  // signal mast 5
-      ONA,  12,  13, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 1,  // signal mast 6
-      ONA,  14,  15, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 1   // signal mast 7
-  } ;
+  int cvNumber = START_CV_OUTPUT;
+  for (int i = 0; i < sizeof(factorySignalMastOutputs); i++, cvNumber++) {
+    Dcc.setCV(cvNumber, pgm_read_byte_near(factorySignalMastOutputs + i));
+  }
+
+  uint16_t OutputCV = START_CV_ASPECT_TABLE ;
   
-  if (Dcc.isSetCVReady()) {
-
-    uint16_t OutputCV ;
-    
-    for (uint16_t i = 0; i < (NUM_SIGNAL_MAST * SEGMENT_SIZE); i++) {
-      OutputCV = START_CV_OUTPUT + i ;
-      Dcc.setCV(OutputCV, signalMasts[i]);
-    }
-  }
-
-  if (Dcc.isSetCVReady()) {
-
-    uint16_t OutputCV = START_CV_ASPECT_TABLE ;
-    
-    for (uint16_t i = 0; i < NUM_SIGNAL_MAST; i++) {
-      for (uint16_t j = 0; j < 32; j++) {
-        Dcc.setCV(OutputCV, j);
-        OutputCV++ ;
-      }
+  for (uint16_t i = 0; i < NUM_SIGNAL_MAST; i++) {
+    for (uint16_t j = 0; j < 32; j++) {
+      Dcc.setCV(OutputCV, j);
+      OutputCV++ ;
     }
   }
 
@@ -335,11 +444,7 @@ void initLocalVariables() {
   rocoAddress = Dcc.getCV(CV_ROCO_ADDRESS);
 
   fadeRate = Dcc.getCV(CV_FADE_RATE);
-
-  fadeRate = fadeRate & 0x07;
-  for (int i = 0; i < 11; i++) {
-    fadeTimeLight[i] = FADE_TIME_LIGHT[i] * fadeRate;
-  }
+  initializeFadeTime();
 
   numSignalNumber = Dcc.getCV(CV_NUM_SIGNAL_NUMBER);
   aspectLag = Dcc.getCV(CV_ASPECT_LAG);
@@ -347,6 +452,13 @@ void initLocalVariables() {
 
   initLocalVariablesSignalMast();
 
+}
+
+void initializeFadeTime() {
+  fadeRate = fadeRate & 0x07;
+  for (int i = 0; i < 11; i++) {
+    fadeTimeLight[i] = FADE_TIME_LIGHT[i] * fadeRate;
+  }
 }
 
 /**********************************************************************************
@@ -357,7 +469,6 @@ void initLocalVariablesSignalMast() {
   int counter = START_CV_OUTPUT;
 
   for (int i = 0; i < NUM_SIGNAL_MAST; i++) {
-
     signalMastLightYellowUpperOutput[i] = Dcc.getCV(counter);   // yellow upper
     counter++;
     signalMastLightGreenOutput[i]       = Dcc.getCV(counter);   // green
@@ -391,20 +502,17 @@ void initLocalVariablesSignalMast() {
     counter++;
     
   }
-
-
+ 
   maxDecoderAddress = thisDecoderAddress ;
   for (int i = 0; i < numSignalNumber; i++) { 
     maxDecoderAddress = maxDecoderAddress + signalMastNumberAddress[i] ;
   }
-
 
   int idx = 0 ;
   for (int i = 0; i < numSignalNumber; i++) {               
     for (int j = 0; j < signalMastNumberAddress[i]; j++) {  
       signalMastNumberIdx[idx] = i ;
       posNumber[idx] = j ;
-      
       signalMastChangePos(signalMastNumberIdx[idx], posNumber[idx], 1) ;
       signalMastChangePos(signalMastNumberIdx[idx], posNumber[idx], 0) ;
       
@@ -421,7 +529,28 @@ void initLocalVariablesSignalMast() {
 
     }
   }
-  
+}
+
+int currentBulbTimeSpan = -1;
+
+unsigned int timeElapsedForBulb(byte nrOutput) {
+  unsigned int start = (lightStartTimeBubl[nrOutput] & 0xffff);
+  if (start == 0) {
+    return currentBulbTimeSpan = UINT16_MAX;
+  }
+  unsigned int cur = currentTime & 0xffff;
+  int span;
+
+  if (start > cur) {
+    span = (unsigned int)(0x10000 - start) + cur;
+  } else {
+    span = cur - start;
+  }
+  if (span >= INT16_MAX) {
+    return currentBulbTimeSpan = INT16_MAX;
+  } else {
+    return currentBulbTimeSpan = (int)span;
+  }
 }
 
 
@@ -429,46 +558,23 @@ void initLocalVariablesSignalMast() {
  *
  */
 void processOutputLight(byte nrOutput) {
-
-  lightElapsedTimeBubl[nrOutput] = currentTime - lightStartTimeBubl[nrOutput];
-
-  if (lightElapsedTimeBubl[nrOutput] > 0xFFFFFFF0) {
-    lightElapsedTimeBubl[nrOutput] = 0 ;  
+  switch (bublState2[nrOutput].sign) {
+    case fixed:
+        processBulbBlinking(nrOutput, 0);
+        break;
+    case blinking54:
+        processBulbBlinking(nrOutput, BLINKING_TIME_54);
+        break;
+    case blinking108:
+        processBulbBlinking(nrOutput, BLINKING_TIME_108);
+        break;
+    case blinking45:
+        processBulbBlinking(nrOutput, BLINKING_TIME_45);
+        break;
+    case blinking22:
+        processBulbBlinking(nrOutput, BLINKING_TIME_22);
+        break;
   }
-
-  switch (bublState[nrOutput]) {
-  case BUBL_ON:
-    processBublOn(nrOutput);
-    break;
-  case BUBL_OFF:
-    processBublOff(nrOutput);
-    break;
-  case BUBL_BLINKING_54_ON:
-    processBublBlinkingOn54(nrOutput);
-    break;
-  case BUBL_BLINKING_108_ON:
-    processBublBlinkingOn108(nrOutput);
-    break;
-  case BUBL_BLINKING_45_ON:
-    processBublBlinkingOn45(nrOutput);
-    break;
-  case BUBL_BLINKING_22_ON:
-    processBublBlinkingOn22(nrOutput);
-    break;
-  case BUBL_BLINKING_54_OFF:
-    processBublBlinkingOff54(nrOutput);
-    break;
-  case BUBL_BLINKING_108_OFF:
-    processBublBlinkingOff108(nrOutput);
-    break;
-  case BUBL_BLINKING_45_OFF:
-    processBublBlinkingOff45(nrOutput);
-    break;
-  case BUBL_BLINKING_22_OFF:
-    processBublBlinkingOff22(nrOutput);
-    break;
-  }
-
 }
 
 /**********************************************************************************
@@ -505,7 +611,6 @@ void signalMastChangePos(int nrSignalMast, uint16_t pos, uint8_t Direction) {
   signalMastLastCode[nrSignalMast] = newAspectIdx ;
   signalMastLastTime[nrSignalMast] = currentTime ;
   signalMastCodeChanged[nrSignalMast] = true ;
-    
 }  
 
 /**********************************************************************************
@@ -538,7 +643,7 @@ void signalMastChangeAspect(int nrSignalMast, byte newAspect) {
   if (signalMastCurrentAspect[nrSignalMast] == newAspect) {
     return;
   }
-
+  
   switch (signalMastSignalSet[nrSignalMast]) {
     case SIGNAL_SET_CSD_BASIC :
       signalMastChangeAspectCsdBasic(nrSignalMast, newAspect) ;
@@ -561,2159 +666,310 @@ void signalMastChangeAspect(int nrSignalMast, byte newAspect) {
 /**********************************************************************************
  *
  */
+typedef LightFunction AspectDefinition[maxOutputsPerMast];
+typedef byte AspectDefinitionBytes[maxOutputsPerMast];
+typedef AspectDefinitionBytes SignalSet32[32];
+
+#define STRIP_OFF LOFF, LOFF, LOFF, LOFF, LOFF  
+#define STRIP_40  STRIP_OFF
+#define STRIP_60  LOFF, LOFF, LON,  LOFF, LOFF
+#define STRIP_80  LOFF, LON,  LOFF, LOFF, LOFF  
+#define B54 B(blinking54)
+#define B108 B(blinking108)
+#define B22 B(blinking22)
+#define L___ LOFF
+
+const SignalSet32 csdBasicAspects PROGMEM = {
+  {   L___, L___, LON,  L___, L___,             STRIP_OFF                     },    // Aspect 0: Stuj
+  {   L___, LON,  L___, L___, L___,             STRIP_OFF                     },    // Aspect 1: Volno
+  {   LON,  L___, L___, L___, L___,             STRIP_OFF                     },    // Aspect 2: Výstraha,
+  {   B54,  L___, L___, L___, L___,             STRIP_OFF                     },    // Aspect 3: Očekávej 40
+  {   B108, L___, L___, L___, L___,             STRIP_OFF                     },    // Aspect 4: Očekávej 60
+  {   L___, B54,  L___, L___, L___,             STRIP_OFF                     },    // Aspect 5: Očekávej 80
+  {   L___, L___, L___, L___, LON,              STRIP_OFF                     },    // Aspect 6: 40 a volno
+  {   LON,  L___, L___, L___, LON,              STRIP_OFF                     },    // Aspect 7: 40 a výstraha
+  {   B54,  L___, L___, L___, LON,              STRIP_OFF                     },    // Aspect 8: 40 a očekávej 40
+  {   B108, L___, L___, L___, LON,              STRIP_OFF                     },    // Aspect 9: 40 a očekávej 60
+  {   L___, B54,  L___, L___, LON,              STRIP_OFF                     },    // Aspect 10: 40 a očekávej 80
+  {   L___, LON,  L___, L___, LON,              STRIP_60                      },    // Aspect 11: 60 a volno
+  {   LON,  L___, L___, L___, LON,              STRIP_60                      },    // Aspect 12: 60 a výstraha
+  {   B54,  L___, L___, L___, LON,              STRIP_60                      },    // Aspect 13: 60 a očekávej 40
+  {   B108, L___, L___, L___, LON,              STRIP_60                      },    // Aspect 14: 60 a očekávej 60
+  {   L___, B54,  L___, L___, LON,              STRIP_60                      },    // Aspect 15: 60 a očekávej 80
+  {   L___, LON,  L___, L___, LON,              STRIP_80                      },    // Aspect 16: 80 a volno
+  {   LON,  L___, L___, L___, LON,              STRIP_80                      },    // Aspect 17: 80 a výstraha
+  {   B54,  L___, L___, L___, LON,              STRIP_80                      },    // Aspect 18: 80 a očekávej 40
+  {   B108, L___, L___, L___, LON,              STRIP_80                      },    // Aspect 19: 80 a očekávej 60
+  {   L___, B54,  L___, L___, LON,              STRIP_80                      },    // Aspect 20: 80 a očekávej 80
+  {   L___, LON,  L___, LON,  L___,             STRIP_OFF                     },    // Aspect 21: Opakovaná volno
+  {   LON,  L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 22: Opakovaná výstraha
+  {   B54,  L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 23: Opakovaná očekávej 40
+  {   B108, L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 24: Opakovaná očekávej 60
+  {   L___, B54,  L___, LON,  L___,             STRIP_OFF                     },    // Aspect 25: Opakovaná očekávej 80
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 26: -----------------------
+  {   STRIP_OFF,                                LON,  L___, L___, L___, L___  },    // Aspect 27: Posun zakázán
+  {   L___, L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 28: Posun dovolen
+  {   L___, L___, LON,  LON,   L___,            STRIP_OFF                     },    // Aspect 29: Posun dovolen - nezabezpečený
+  {   L___, L___, L___, B54,  L___,             STRIP_OFF                     },    // Aspect 30: Opatrně na přivolávací návěst bez červené
+  {   L___, L___, LON,  B54,  L___,             STRIP_OFF                     },    // Aspect 31: Opatrně na přivolávací návěst
+};
+
+const SignalSet32 csdIntermediateAspects PROGMEM = {
+  {   L___, L___, LON,  L___, L___,             STRIP_OFF                     },    // Aspect 0: Stuj
+  {   L___, LON,  L___, L___, L___,             STRIP_OFF                     },    // Aspect 1: Volno
+  {   LON,  L___, L___, L___, L___,             STRIP_OFF                     },    // Aspect 2: Výstraha,
+  {   B54,  L___, L___, L___, L___,             STRIP_OFF                     },    // Aspect 3: Očekávej 40
+  {   L___, LON,  L___, LON,  LON,              STRIP_OFF                     },    // Aspect 4: 40 a opakovaná volno             *
+  {   L___, LON,  L___, LON,  LON,              STRIP_60                      },    // Aspect 5: 60 a opakovaná volno             *
+  {   L___, L___, L___, L___, LON,              STRIP_OFF                     },    // Aspect 6: 40 a volno
+  {   LON,  L___, L___, L___, LON,              STRIP_OFF                     },    // Aspect 7: 40 a výstraha
+  {   B54,  L___, L___, L___, LON,              STRIP_OFF                     },    // Aspect 8: 40 a očekávej 40
+  {   L___, LON,  L___, LON,  LON,              STRIP_80                      },    // Aspect 9: 80 a opakovaná volno             *
+  {   LON,  L___, L___, LON,  LON,              STRIP_OFF                     },    // Aspect 10: 40 a opakovaná výstraha         *
+  {   L___, LON,  L___, L___, LON,              STRIP_60                      },    // Aspect 11: 60 a volno
+  {   B54,  L___, L___, LON,  LON,              STRIP_OFF                     },    // Aspect 12: 40 a opakovaná očekávej 40      *
+  {   B108, L___, L___, LON,  LON,              STRIP_OFF                     },    // Aspect 13: 40 a opakovaná očekávej 60      *
+  {   L___, B54,  L___, L___, LON,              STRIP_OFF                     },    // Aspect 14: 40 a opakovaná očekávej 80      *
+  {   LON,  L___, L___, LON,  LON,              STRIP_60                      },    // Aspect 15: 60 a opakovaná výstraha         *
+  {   L___, LON,  L___, L___, LON,              STRIP_80                      },    // Aspect 16: 80 a volno
+  {   B54,  L___, L___, L___, LON,              STRIP_60                      },    // Aspect 17: 60 a opakovaná očekávej 40      *
+  {   B108, L___, L___, L___, LON,              STRIP_60                      },    // Aspect 18: 60 a opakovaná očekávej 60      *
+  {   L___, B54,  L___, L___, LON,              STRIP_60                      },    // Aspect 19: 60 a opakovaná očekávej 80      *
+  {   LON,  L___, L___, LON,  LON,              STRIP_80                      },    // Aspect 20: 80 a opakovaná výstraha         *
+  {   L___, LON,  L___, LON,  L___,             STRIP_OFF                     },    // Aspect 21: Opakovaná volno
+  {   LON,  L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 22: Opakovaná výstraha
+  {   B54,  L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 23: Opakovaná očekávej 40
+  {   B108, L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 24: Opakovaná očekávej 60
+  {   L___, B54,  L___, LON,  L___,             STRIP_OFF                     },    // Aspect 25: Opakovaná očekávej 80
+  {   B54,  L___, L___, LON,  LON,              STRIP_80                      },    // Aspect 26: 80 a opakovaná očekávej 40      *
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 27: ----------------------------
+  {   L___, L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 28: Posun dovolen
+  {   B108, L___, L___, LON,  LON,              STRIP_80                      },    // Aspect 29: 80 a opakovaná očekávej 60
+  {   L___, L___, L___, B54,  L___,             STRIP_80                      },    // Aspect 30: 80 a opakovaná očekávej 80
+  {   L___, L___, LON,  B54,  L___,             STRIP_OFF                     },    // Opatrně na přivolávací návěst
+};
+
+const SignalSet32 csdEmbeddedAspects PROGMEM = {
+  {   L___, L___, LON,  L___, L___,             STRIP_OFF                     },    // Aspect 0: Stuj
+  {   L___, LON,  L___, L___, L___,             STRIP_OFF                     },    // Aspect 1: Volno
+  {   LON,  L___, L___, L___, L___,             STRIP_OFF                     },    // Aspect 2: Výstraha,
+  {   B54,  L___, L___, L___, L___,             STRIP_OFF                     },    // Aspect 3: Očekávej 40
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 4: ----------------------------           *
+  {   L___, L___, B22, L___,                    STRIP_OFF                     },    // Aspect 5: Odjezdové návěstidlo dovoluje jízdu    *
+  {   L___, LON, L___, L___, L___,              LON,   L___, L___, L___, L___ },    // Aspect 6: Stůj s modrou                          *
+  {   LON,  L___, L___, L___, LON,              STRIP_OFF                     },    // Aspect 7: 40 a výstraha
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 8:  ---------------------------           *
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 9:  ---------------------------           *
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 10: ---------------------------           *
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 11: ---------------------------           *
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 12: ---------------------------           *
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 13: ---------------------------           *
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 14: ---------------------------           *
+  {   STRIP_OFF,                                LON,   L___, L___, L___, L___ },    // Aspect 15: Sunout zakázáno opakovaná             *
+  {   L___, LON,  L___, L___, L___,             STRIP_OFF                     },    // Aspect 16: Sunout zakázáno                       *
+  {   L___, L___, L___, LON, L___,              L___,  L___, L___, LON,  L___ },    // Aspect 17: Sunout pomalu                         *
+  {   L___, L___, L___, LON, L___,              STRIP_OFF                     },    // Aspect 18: Sunout rychleji                       *
+  {   L___, LON, L___, L___, L___,              L___,  L___, L___, L___, LON  },    // Aspect 19: Zpět                                  *
+  {   STRIP_OFF,                                LON,   L___, L___, L___, LON  },    // Aspect 20: Zpět opakovaná                        *
+  {   L___, LON,  L___, LON,  L___,             STRIP_OFF                     },    // Aspect 21: Opakovaná volno
+  {   LON,  L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 22: Opakovaná výstraha
+  {   B54,  L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 23: Opakovaná očekávej 40
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 24: -----------------------               *
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 25: Posun zakázán opakovaná               *
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 26: Na spádovišti se neposunuje           *
+  {   L___, L___, L___, L___, L___,             LON,  L___, L___, L___, L___  },    // Aspect 27: Posun zakázán
+  {   L___, L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 28: Posun dovolen
+  {   L___, L___, LON, LON,   L___,             STRIP_OFF                     },    // Aspect 29: Posun dovolen - nezabezpečený
+  {   L___, L___, L___, B54,  L___,             STRIP_OFF                     },    // Aspect 30: Opatrně na přivolávací návěst bez červené
+  {   L___, L___, LON,  B54,  L___,             STRIP_OFF                     },    // Aspect 31: Opatrně na přivolávací návěst
+};
+
+const SignalSet32 szdcBasicAspects PROGMEM = {
+  {   L___, L___, LON,  L___, L___,             STRIP_OFF                     },    // Aspect 0: Stuj
+  {   L___, LON,  L___, L___, L___,             STRIP_OFF                     },    // Aspect 1: Volno
+  {   LON,  L___, L___, L___, L___,             STRIP_OFF                     },    // Aspect 2: Výstraha,
+  {   B54,  L___, L___, L___, L___,             STRIP_OFF                     },    // Aspect 3: Očekávej 40
+  {   B108, L___, L___, L___, L___,             STRIP_OFF                     },    // Aspect 4: Očekávej 60
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 5: -----------------------                *
+  {   L___, L___, L___, L___, LON,              STRIP_OFF                     },    // Aspect 6: 40 a volno
+  {   LON,  L___, L___, L___, LON,              STRIP_OFF                     },    // Aspect 7: 40 a výstraha
+  {   B54,  L___, L___, L___, LON,              STRIP_OFF                     },    // Aspect 8: 40 a očekávej 40
+  {   B108, L___, L___, L___, LON,              STRIP_OFF                     },    // Aspect 9: 40 a očekávej 60
+  {   L___, B54,  L___, L___, LON,              STRIP_OFF                     },    // Aspect 10: 40 a očekávej 80
+  {   L___, LON,  L___, L___, LON,              STRIP_60                      },    // Aspect 11: 60 a volno
+  {   LON,  L___, L___, L___, LON,              STRIP_60                      },    // Aspect 12: 60 a výstraha
+  {   B54,  L___, L___, L___, LON,              STRIP_60                      },    // Aspect 13: 60 a očekávej 40
+  {   B108, L___, L___, L___, LON,              STRIP_60                      },    // Aspect 14: 60 a očekávej 60
+  {   L___, B54,  L___, L___, LON,              STRIP_60                      },    // Aspect 15: 60 a očekávej 80
+  {   LON,  L___, L___, LON,  LON,              STRIP_OFF                     },    // Aspect 16: 40 a opakovaná výstraha               *
+  {   B54,  L___, L___, LON,  LON,              STRIP_OFF                     },    // Aspect 17: 40 a opakovaná očekávej 40            *
+  {   B108, L___, L___, LON,  LON,              STRIP_OFF                     },    // Aspect 18: 40 a opakovaná očekávej 60            *
+  {   LON,  L___, L___, B54,  L___,             STRIP_OFF                     },    // Aspect 19: Jízda podle rozhledových poměrů       *
+  {   LON,  L___, L___, B54,  LON,              STRIP_OFF                     },    // Aspect 20: 40 a jízda podle rozhledových poměrů  *
+  {   L___, LON,  L___, LON,  L___,             STRIP_OFF                     },    // Aspect 21: Opakovaná volno
+  {   LON,  L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 22: Opakovaná výstraha
+  {   B54,  L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 23: Opakovaná očekávej 40
+  {   B108, L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 24: Opakovaná očekávej 60
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 25: -----------------------
+  {   STRIP_OFF,                                B108, L___, L___, L___, L___  },    // Aspect 26: Jízda vlaku dovolena                  *
+  {   L___, L___, L___, L___, L___,             LON,  L___, L___, L___, L___  },    // Aspect 27: Posun zakázán
+  {   L___, L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 28: Posun dovolen
+  {   L___, L___, LON,  LON,  L___,             STRIP_OFF                     },    // Aspect 29: Posun dovolen - nezabezpečený
+  {   L___, L___, L___, B54,  L___,             STRIP_OFF                     },    // Aspect 30: Opatrně na přivolávací návěst bez červené
+  {   L___, L___, LON,  B54,  L___,             STRIP_OFF                     },    // Aspect 31: Opatrně na přivolávací návěst
+};
+
+const SignalSet32 csdMechanicalAspects PROGMEM = {
+  {   L___, L___, LON,  L___, L___,             STRIP_OFF                     },    // Aspect 0: Stuj
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 1:  ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 2:  ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 3:  ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 4: ----------------------------           
+  {   L___, L___, B22, L___,                    STRIP_OFF                     },    // Aspect 5: Odjezdové návěstidlo dovoluje jízdu    
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 6: ----------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 7: ----------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 8: ----------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 9: ----------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 10: ----------------------------          
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 11: ----------------------------          
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 12: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 13: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 14: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 15: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 16: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 17: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 18: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 19: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 20: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 21: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 22: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 23: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 24: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 25: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 26: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 27: ---------------------------           
+  {   L___, L___, L___, LON,  L___,             STRIP_OFF                     },    // Aspect 28: Posun dovolen
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 29: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 30: ---------------------------           
+  {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 31: ---------------------------           
+};
+
+
+
 void signalMastChangeAspectCsdBasic(int nrSignalMast, byte newAspect) {
-
-  signalMastCurrentAspect[nrSignalMast] = newAspect;
-
-  switch (newAspect) {
-    
-  case 0: // Stůj
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_ON);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 1: // Volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 2: // Výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 3: // Očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 4: // Očekávej 60
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_108);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 5: // Očekávej 80
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_BLINKING_54);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 6: // 40 a volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 7: // 40 a výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 8: // 40 a očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 9: // 40 a očekávej 60
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_108);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 10: // 40 a očekávej 80
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_BLINKING_54);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 11: // 60 a volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 12: // 60 a výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 13: // 60 a očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 14: // 60 a očekávej 60
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_108);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 15: // 60 a očekávej 80
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_BLINKING_54);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 16: // 80 a volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_ON);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 17: // 80 a výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_ON);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 18: // 80 a očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_ON);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 19: // 80 a očekávej 60
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_108);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_ON);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 20: // 80 a očekávej 80
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_BLINKING_54);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_ON);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 21: // Opakovaná volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 22: // Opakovaná výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 23: // Opakovaná očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 24: // Opakovaná očekávej 60
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_108);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 25: // Opakovaná očekávej 80
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_BLINKING_54);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 27: // Posun zakázán
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_ON);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 28: // Posun dovolen
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 29: // Posun dovolen - nezabezpečený
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_ON);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 30: // Opatrně na přivolávací návěst bez červené
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_BLINKING_54);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 31: // Opatrně na přivolávací návěst
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_ON);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_BLINKING_54);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  };
+  signalMastChangeAspect(&(csdBasicAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
 }
 
-/**********************************************************************************
- *
- */
 void signalMastChangeAspectCsdIntermediate(int nrSignalMast, byte newAspect) {
-
-  signalMastCurrentAspect[nrSignalMast] = newAspect;
-
-  switch (newAspect) {
-    
-  case 0: // Stůj
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_ON);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 1: // Volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 2: // Výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 3: // Očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 4: // 40 a opakovaná volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 5: // 60 a opakovaná volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 6: // 40 a volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 7: // 40 a výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 8: // 40 a očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 9: // 80 a opakovaná volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_ON);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 10: // 40 a opakovaná výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 11: // 60 a volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 12: // 40 a opakovaná očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 13: // 40 a opakovaná očekávej 60
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_108);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 14: // 40 a opakovaná očekávej 80
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_BLINKING_54);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 15: // 60 a opakovaná výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 16: // 80 a volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_ON);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 17: // 60 a opakovaná očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 18: // 60 a opakovaná očekávej 60
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_108);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 19: // 60 a opakovaná očekávej 80
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_BLINKING_54);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 20: // 80 a opakovaná výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_ON);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 21: // Opakovaná volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 22: // Opakovaná výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 23: // Opakovaná očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 24: // Opakovaná očekávej 60
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_108);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 25: // Opakovaná očekávej 80
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_BLINKING_54);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 26: // 80 a opakovaná očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_ON);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 28: // Posun dovolen
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 29: // 80 a opakovaná očekávej 60
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_108);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_ON);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 30: // 80 a opakovaná očekávej 80
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_BLINKING_54);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_ON);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 31: // Opatrně na přivolávací návěst
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_ON);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_BLINKING_54);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  };
+  signalMastChangeAspect(&(csdIntermediateAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
 }
 
-/**********************************************************************************
- *
- */
 void signalMastChangeAspectCsdEmbedded(int nrSignalMast, byte newAspect) {
-
-  signalMastCurrentAspect[nrSignalMast] = newAspect;
-
-  switch (newAspect) {
-    
-  case 0: // Stůj
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_ON);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 1: // Volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 2: // Výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 3: // Očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 5: // Odjezdové návěstidlo dovoluje jízdu
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_BLINKING_22);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 6: // Stůj s modrou
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_ON);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_ON);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 7: // 40 a výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 15: // Sunout zakázáno opakovaná
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_ON);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 16: // Sunout zakázáno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_ON);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 17: // Sunout pomalu
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_ON);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 18: // Sunout rychleji
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 19: // Zpět
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_ON);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_ON);      // backward
-
-    break;
-
-  case 20: // Zpět opakovaná
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_ON);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_ON);      // backward
-
-    break;
-
-  case 21: // Opakovaná volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 22: // Opakovaná výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 23: // Opakovaná očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 25: // Posun zakázán opakovaná
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 26: // Na spádovišti se neposunuje
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 27: // Posun zakázán
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_ON);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 28: // Posun dovolen
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 29: // Posun dovolen - nezabezpečený
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_ON);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 31: // Opatrně na přivolávací návěst
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  };
+  signalMastChangeAspect(&(csdEmbeddedAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
 }
 
-/**********************************************************************************
- *
- */
 void signalMastChangeAspectSzdcBasic(int nrSignalMast, byte newAspect) {
-
-  signalMastCurrentAspect[nrSignalMast] = newAspect;
-
-  switch (newAspect) {
-    
-  case 0: // Stůj
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_ON);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 1: // Volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 2: // Výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 3: // Očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 4: // Očekávej 60
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_108);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 6: // 40 a volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 7: // 40 a výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 8: // 40 a očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 9: // 40 a očekávej 60
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_108);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 11: // 60 a volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 12: // 60 a výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 13: // 60 a očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 14: // 60 a očekávej 60
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_108);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_ON);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 16: // 40 a opakovaná výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 17: // 40 a opakovaná očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 18: // 40 a opakovaná očekávej 60
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_108);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 19: // Jízda podle rozhledových poměrů
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_BLINKING_54);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 20: // 40 a jízda podle rozhledových poměrů
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_BLINKING_54);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_ON);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 21: // Opakovaná volno
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_ON);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 22: // Opakovaná výstraha
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_ON);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 23: // Opakovaná očekávej 40
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_54);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 24: // Opakovaná očekávej 60
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_BLINKING_108);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 26: // Jízda vlaku dovolena
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_BLINKING_54);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 27: // Posun zakázán
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_ON);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 28: // Posun dovolen
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 29: // Posun dovolen - nezabezpečený
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_ON);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 30: // Opatrně na přivolávací návěst bez červené
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_BLINKING_54);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 31: // Opatrně na přivolávací návěst
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_ON);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_BLINKING_54);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  };
+  signalMastChangeAspect(&(szdcBasicAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
 }
 
-/**********************************************************************************
- *
- */
 void signalMastChangeAspectCsdMechanical(int nrSignalMast, byte newAspect) {
+  signalMastChangeAspect(&(csdMechanicalAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
+}
 
+void signalMastChangeAspect(int progMemOffset, int tableSize, int nrSignalMast, byte newAspect) {
+  if (debugAspects) {
+    Serial.print(F("Change mast ")); Serial.print(nrSignalMast); Serial.print(F(" to aspect ")); Serial.println(newAspect);
+  }
+  if (newAspect >= tableSize) {
+    Serial.print(F("Invalid aspect ")); Serial.println(newAspect);
+    return;
+  }
   signalMastCurrentAspect[nrSignalMast] = newAspect;
 
-  switch (newAspect) {
-    
-  case 0: // Stůj
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_ON);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_OFF);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
+  // Configuration of light outputs
+  LightFunction buffer[maxOutputsPerMast];
 
-    break;
+  // Must copy bytes from PROGMEM to bufferon stack:
+  byte* out = (byte*)(void*)&(buffer[0]);
+  for (int i = 0; i < sizeof(buffer); i++) {
+    *out = pgm_read_byte_near(progMemOffset + i);
+    out++;
+  }
 
-  case 5: // Odjezdové návěstidlo dovoluje jízdu
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_BLINKING_22);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  case 28: // Posun dovolen
-    changeSignalMastLightYellowUpperState(nrSignalMast, LIGHT_OFF);      // yellow upper
-    changeSignalMastLightGreenState(nrSignalMast,       LIGHT_OFF);      // green
-    changeSignalMastLightRedState(nrSignalMast,         LIGHT_OFF);      // red
-    changeSignalMastLightLunarState(nrSignalMast,       LIGHT_ON);      // lunar
-    changeSignalMastLightYellowLowerState(nrSignalMast, LIGHT_OFF);      // yellow lower
-    changeSignalMastLightBlueState(nrSignalMast,        LIGHT_OFF);      // blue
-    changeSignalMastLightGreenStripState(nrSignalMast,  LIGHT_OFF);      // green strip
-    changeSignalMastLightYellowStripState(nrSignalMast, LIGHT_OFF);      // yellow strip
-    changeSignalMastLightLunarLowerState(nrSignalMast,  LIGHT_OFF);      // lunar lower
-    changeSignalMastLightBackwardState(nrSignalMast,    LIGHT_OFF);      // backward
-
-    break;
-
-  };
+  // Process LightFunction instructioins
+  for (int i = 0; i < maxOutputsPerMast; i++) {
+    const oneLightOutputs& outConfig = *(lightConfiguration[i]);
+    int nOutput = outConfig[nrSignalMast];
+    changeLightState2(nOutput, buffer[i]);
+  }
 }
 
-/**********************************************************************************
- *
- */
-void changeSignalMastLightYellowUpperState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightYellowUpperState[nrSignalMast] == newState) {
-    return;
+void resetStartTime(int lightOutput) {
+  unsigned int v = currentTime & 0xffff;
+  if (v == 0) {
+    v++;
   }
-
-  if (signalMastLightYellowUpperOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightYellowUpperState[nrSignalMast] = newState;
-
-  changeLightState(signalMastLightYellowUpperOutput[nrSignalMast],
-      signalMastLightYellowUpperState[nrSignalMast]);
+  lightStartTimeBubl[lightOutput] = v;
 }
 
-/**********************************************************************************
- *
- */
-void changeSignalMastLightGreenState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightGreenState[nrSignalMast] == newState) {
+void changeLightState2(byte lightOutput, struct LightFunction newState) {
+  if (lightOutput >= NUM_OUTPUTS) {
     return;
   }
+  LightFunction& bs = bublState2[lightOutput];
 
-  if (signalMastLightGreenOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightGreenState[nrSignalMast] = newState;
-
-  changeLightState(signalMastLightGreenOutput[nrSignalMast],
-      signalMastLightGreenState[nrSignalMast]);
-}
-
-/**********************************************************************************
- *
- */
-void changeSignalMastLightRedState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightRedState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightRedOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightRedState[nrSignalMast] = newState;
-
-  changeLightState(signalMastLightRedOutput[nrSignalMast],
-      signalMastLightRedState[nrSignalMast]);
-}
-
-/**********************************************************************************
- *
- */
-void changeSignalMastLightLunarState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightLunarState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightLunarOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightLunarState[nrSignalMast] = newState;
-
-  changeLightState(signalMastLightLunarOutput[nrSignalMast],
-      signalMastLightLunarState[nrSignalMast]);
-}
-
-/**********************************************************************************
- *
- */
-void changeSignalMastLightYellowLowerState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightYellowLowerState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightYellowLowerOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightYellowLowerState[nrSignalMast] = newState;
-
-  changeLightState(signalMastLightYellowLowerOutput[nrSignalMast],
-      signalMastLightYellowLowerState[nrSignalMast]);
-}
-
-/**********************************************************************************
- *
- */
-void changeSignalMastLightBlueState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightBlueState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightBlueOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightBlueState[nrSignalMast] = newState;
-
-  changeLightState(signalMastLightBlueOutput[nrSignalMast],
-      signalMastLightBlueState[nrSignalMast]);
-}
-
-/**********************************************************************************
- *
- */
-void changeSignalMastLightGreenStripState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightGreenStripState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightGreenStripOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightGreenStripState[nrSignalMast] = newState;
-
-  changeLightState(signalMastLightGreenStripOutput[nrSignalMast],
-      signalMastLightGreenStripState[nrSignalMast]);
-}
-
-/**********************************************************************************
- *
- */
-void changeSignalMastLightYellowStripState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightYellowStripState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightYellowStripOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightYellowStripState[nrSignalMast] = newState;
-
-  changeLightState(signalMastLightYellowStripOutput[nrSignalMast],
-      signalMastLightYellowStripState[nrSignalMast]);
-}
-
-/**********************************************************************************
- *
- */
-void changeSignalMastLightLunarLowerState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightLunarLowerState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightLunarLowerOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightLunarLowerState[nrSignalMast] = newState;
-
-  changeLightState(signalMastLightLunarLowerOutput[nrSignalMast],
-      signalMastLightLunarLowerState[nrSignalMast]);
-}
-
-/**********************************************************************************
- *
- */
-void changeSignalMastLightBackwardState(int nrSignalMast, byte newState) {
-
-  if (signalMastLightBackwardState[nrSignalMast] == newState) {
-    return;
-  }
-
-  if (signalMastLightBackwardOutput[nrSignalMast] & 0xF0) {
-    return;
-  }
-
-  signalMastLightBackwardState[nrSignalMast] = newState;
-
-  changeLightState(signalMastLightBackwardOutput[nrSignalMast],
-      signalMastLightBackwardState[nrSignalMast]);
-}
-
-
-
-/**********************************************************************************
- *
- */
-void changeLightState(byte lightOutput, byte newState) {
-
-  if (lightState[lightOutput] == newState) {
-    return;
-  }
-
-  switch (newState) {
-
-  case LIGHT_OFF:
-    if (bublState[lightOutput] == BUBL_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_54_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_108_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_45_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_22_ON) {
-      bublState[lightOutput] = BUBL_OFF;
-      lightStartTimeBubl[lightOutput] = millis();
-      lightState[lightOutput] = LIGHT_OFF;
-    } else { // (bublState[lightOutput] == BUBL_OFF || bublState[lightOutput] == BUBL_BLINKING_nnn_OFF)
-      bublState[lightOutput] = BUBL_OFF;
-      lightState[lightOutput] = LIGHT_OFF;
+  boolean wasOff = bs.off;
+  if (bs.sign == newState.sign) {
+    // exception: fixed(on) != fixed(off)
+    if (newState.sign != fixed || newState.off == wasOff) {
+      return;
     }
-    break;
-
-  case LIGHT_ON:
-    if (bublState[lightOutput] == BUBL_ON
-        || bublState[lightOutput] == BUBL_BLINKING_54_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_108_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_45_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_22_ON) {
-      bublState[lightOutput] = BUBL_ON;
-      lightState[lightOutput] = LIGHT_ON;
-    } else { // (bublState[lightOutput] == BUBL_OFF || bublState[lightOutput] == BUBL_BLINKING_nnn_OFF)
-      bublState[lightOutput] = BUBL_ON;
-      lightStartTimeBubl[lightOutput] = millis();
-      lightState[lightOutput] = LIGHT_ON;
-    }
-    break;
-
-  case LIGHT_BLINKING_54:
-    if (bublState[lightOutput] == BUBL_ON
-        || bublState[lightOutput] == BUBL_BLINKING_54_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_108_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_45_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_22_ON) {
-      bublState[lightOutput] = BUBL_BLINKING_54_OFF;
-      lightStartTimeBubl[lightOutput] = millis();
-      lightState[lightOutput] = LIGHT_BLINKING_54;
-    } else { // (bublState[lightOutput] == BUBL_OFF || bublState[lightOutput] == BUBL_BLINKING_nnn_OFF)
-      bublState[lightOutput] = BUBL_BLINKING_54_ON;
-      lightStartTimeBubl[lightOutput] = millis();
-      lightState[lightOutput] = LIGHT_BLINKING_54;
-    }
-    break;
-
-  case LIGHT_BLINKING_108:
-    if (bublState[lightOutput] == BUBL_ON
-        || bublState[lightOutput] == BUBL_BLINKING_54_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_108_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_45_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_22_ON) {
-      bublState[lightOutput] = BUBL_BLINKING_108_OFF;
-      lightStartTimeBubl[lightOutput] = millis();
-      lightState[lightOutput] = LIGHT_BLINKING_108;
-    } else { // (bublState[lightOutput] == BUBL_OFF || bublState[lightOutput] == BUBL_BLINKING_nnn_OFF)
-      bublState[lightOutput] = BUBL_BLINKING_108_ON;
-      lightStartTimeBubl[lightOutput] = millis();
-      lightState[lightOutput] = LIGHT_BLINKING_108;
-    }
-    break;
-
-  case LIGHT_BLINKING_45:
-    if (bublState[lightOutput] == BUBL_ON
-        || bublState[lightOutput] == BUBL_BLINKING_54_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_108_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_45_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_22_ON) {
-      bublState[lightOutput] = BUBL_BLINKING_45_OFF;
-      lightStartTimeBubl[lightOutput] = millis();
-      lightState[lightOutput] = LIGHT_BLINKING_45;
-    } else { // (bublState[lightOutput] == BUBL_OFF || bublState[lightOutput] == BUBL_BLINKING_nnn_OFF)
-      bublState[lightOutput] = BUBL_BLINKING_45_ON;
-      lightStartTimeBubl[lightOutput] = millis();
-      lightState[lightOutput] = LIGHT_BLINKING_45;
-    }
-    break;
-
-  case LIGHT_BLINKING_22:
-    if (bublState[lightOutput] == BUBL_ON
-        || bublState[lightOutput] == BUBL_BLINKING_54_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_108_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_45_ON 
-        || bublState[lightOutput] == BUBL_BLINKING_22_ON) {
-      bublState[lightOutput] = BUBL_BLINKING_22_OFF;
-      lightStartTimeBubl[lightOutput] = millis();
-      lightState[lightOutput] = LIGHT_BLINKING_22;
-    } else { // (bublState[lightOutput] == BUBL_OFF || bublState[lightOutput] == BUBL_BLINKING_nnn_OFF)
-      bublState[lightOutput] = BUBL_BLINKING_22_ON;
-      lightStartTimeBubl[lightOutput] = millis();
-      lightState[lightOutput] = LIGHT_BLINKING_22;
-    }
-    break;
   }
 
+  if (newState.sign == fixed) {
+    if (newState.off != wasOff) {
+      resetStartTime(lightOutput);
+    }
+    bs = newState;
+  } else {
+    resetStartTime(lightOutput);
+    bs = newState;
+    bs.off = !wasOff;
+  }
 }
 
-/**********************************************************************************
- *
- */
-void processBublOn(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
-    digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    lightCounter[nrOutput] = 0;
+void processBulbBlinking(byte nrOutput, int blinkDelay) {
+  boolean off = bublState2[nrOutput].off;
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > 0xff00) {
+    // just to be sure, elapsed time is too large, ignore the light.
     return;
   }
+  if (elapsed > fadeTimeLight[10]) {
+    if (!bublState2[nrOutput].end) {
+      if (debugLightFlip) {
+        Serial.print("Light elapsed "); Serial.println(nrOutput); 
+      }
+      bublState2[nrOutput].end = true;
+      ShiftPWM.SetOne(nrOutput, off ? minBrightness : maxBrightness);
+    }
 
-  processFadeOn(nrOutput);
-}
-
-/**********************************************************************************
- *
- */
-void processBublOff(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
-    digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    lightCounter[nrOutput] = 0;
-    return;
-  }
-
-  processFadeOff(nrOutput);
-}
-
-/**********************************************************************************
- *
- */
-void processBublBlinkingOn54(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
-
-    digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_54) { // if (elapsedTimeBubl > BLINKING_TIME) {
-      bublState[nrOutput] = BUBL_BLINKING_54_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
+    if (blinkDelay > 0) {
+      if (elapsed > blinkDelay) {
+        bublState2[nrOutput].end = false;
+        bublState2[nrOutput].off = !off;
+        resetStartTime(nrOutput);
+      }
+    } else {
+      lightStartTimeBubl[nrOutput] = 0;
     }
     return;
   }
-
-  processFadeOn(nrOutput);
-}
-
-/**********************************************************************************
- *
- */
-void processBublBlinkingOn108(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
-
-    digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_108) { // if (elapsedTimeBubl > BLINKING_TIME) {
-      bublState[nrOutput] = BUBL_BLINKING_108_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
-    }
-    return;
+  if (off) {
+    processFadeOff(nrOutput);
+  } else {
+    processFadeOn(nrOutput);
   }
-
-  processFadeOn(nrOutput);
-}
-
-/**********************************************************************************
- *
- */
-void processBublBlinkingOn45(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
-
-    digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_45) { // if (elapsedTimeBubl > BLINKING_TIME) {
-      bublState[nrOutput] = BUBL_BLINKING_45_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
-    }
-    return;
-  }
-
-  processFadeOn(nrOutput);
-}
-
-/**********************************************************************************
- *
- */
-void processBublBlinkingOn22(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
-
-    digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_22) { // if (elapsedTimeBubl > BLINKING_TIME) {
-      bublState[nrOutput] = BUBL_BLINKING_22_OFF;    // = BUBL_BLINKING_OFF;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
-    }
-    return;
-  }
-
-  processFadeOn(nrOutput);
-}
-
-/**********************************************************************************
- *
- */
-void processBublBlinkingOff54(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
-
-    digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_54) { // if (elapsedTimeBubl > BLINKING_TIME) {
-      bublState[nrOutput] = BUBL_BLINKING_54_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;      
-    }
-    return;
-  }
-
-  processFadeOff(nrOutput);
-}
-
-/**********************************************************************************
- *
- */
-void processBublBlinkingOff108(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
-
-    digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_108) { // if (elapsedTimeBubl > BLINKING_TIME) {
-      bublState[nrOutput] = BUBL_BLINKING_108_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
-    }
-    return;
-  }
-
-  processFadeOff(nrOutput);
-}
-
-/**********************************************************************************
- *
- */
-void processBublBlinkingOff45(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
-
-    digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_45) { // if (elapsedTimeBubl > BLINKING_TIME) {
-      bublState[nrOutput] = BUBL_BLINKING_45_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
-    }
-    return;
-  }
-
-  processFadeOff(nrOutput);
-}
-
-/**********************************************************************************
- *
- */
-void processBublBlinkingOff22(byte nrOutput) {
-
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
-
-    digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-
-    if (lightElapsedTimeBubl[nrOutput] > BLINKING_TIME_22) { // if (elapsedTimeBubl > BLINKING_TIME) {
-      bublState[nrOutput] = BUBL_BLINKING_22_ON;    // = BUBL_BLINKING_ON;
-      lightStartTimeBubl[nrOutput] = millis();
-      lightCounter[nrOutput] = 0;
-    }
-    return;
-  }
-
-  processFadeOff(nrOutput);
 }
 
 /**********************************************************************************
@@ -2721,256 +977,44 @@ void processBublBlinkingOff22(byte nrOutput) {
  */
 void processFadeOn(byte nrOutput) {
 
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[11]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[11]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[9]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[10]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[10]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[8]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[9]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[9]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[7]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[8]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[8]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[6]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[7]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[7]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[5]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[6]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[6]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[4]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[5]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[5]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[3]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[4]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[4]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[2]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[3]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[3]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[1]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[2]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[2]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[0]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[1]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[1]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else { if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[0]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[0]) {
-      lightCounter[nrOutput] = 0;
-    }
-  }
+  int idx = 0;
+  int limit = (sizeof(fadeTimeLight) / sizeof(fadeTimeLight[0]));
 
+  int elapsed = timeElapsedForBulb(nrOutput);
+  for (idx = 0; idx < limit && elapsed > fadeTimeLight[idx]; idx++) ;
+  int span = (maxBrightness - minBrightness);
+  int pwm = idx >= limit ? maxBrightness : ((span * FADE_COUNTER_LIGHT_1[idx]) / FADE_COUNTER_LIGHT_2[idx]) + minBrightness;
+
+  ShiftPWM.SetOne(nrOutput, pwm);
+
+  if (debugFadeOnOff) {
+    Serial.print("Fade ON, output="); Serial.print(nrOutput); Serial.print("idx="); Serial.print(idx); Serial.print(", counters: "); 
+    Serial.print(FADE_COUNTER_LIGHT_1[idx]); Serial.print("/"); Serial.print(FADE_COUNTER_LIGHT_2[idx]); 
+    Serial.print(", time="); Serial.print(elapsed);
+    Serial.print(" pwm="); Serial.println(pwm);
+  }
 }
 
 /**********************************************************************************
  *
  */
 void processFadeOff(byte nrOutput) {
+  int idx;
+  int limit = (sizeof(fadeTimeLight) / sizeof(fadeTimeLight[0]));
+  int elapsed = timeElapsedForBulb(nrOutput);
+  for (idx = 0; idx < limit && elapsed > fadeTimeLight[idx]; idx++) ;
+  
+  int span = (maxBrightness - minBrightness);
+  int pwm = idx >= limit ? minBrightness : maxBrightness - ((span * FADE_COUNTER_LIGHT_1[idx]) / FADE_COUNTER_LIGHT_2[idx]);
 
-  if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[10]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[11]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[11]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[9]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[10]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[10]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[8]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[9]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[9]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[7]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[8]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[8]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[6]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[7]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[7]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[5]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[6]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[6]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[4]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[5]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[5]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[3]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[4]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[4]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[2]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[3]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[3]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[1]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[2]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[2]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (lightElapsedTimeBubl[nrOutput] > fadeTimeLight[0]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[1]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[1]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[0]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[0]) {
-      lightCounter[nrOutput] = 0;
-    }
+  ShiftPWM.SetOne(nrOutput, pwm);
+
+  if (debugFadeOnOff) {
+    Serial.print("Fade OFF, output="); Serial.print(nrOutput); Serial.print("idx="); Serial.print(", counters: "); 
+    Serial.print(FADE_COUNTER_LIGHT_1[idx]); Serial.print("/"); Serial.print(FADE_COUNTER_LIGHT_2[idx]); 
+    Serial.print(", time="); Serial.print(elapsed);
+    Serial.print(" pwm="); Serial.println(pwm);
   }
-
 }
 
 /**************************************************************************
@@ -3043,10 +1087,7 @@ void notifyCVChange(uint16_t CV, uint8_t Value) {
 
   if (CV == CV_FADE_RATE) {
     fadeRate = Value;
-    fadeRate = fadeRate & 0x07;
-    for (int i = 0; i < 11; i++) {
-      fadeTimeLight[i] = FADE_TIME_LIGHT[i] * fadeRate;
-    }
+    initializeFadeTime();
     return ;
   }
 
@@ -3119,4 +1160,3 @@ byte aspectJmri(int nrSignalMast, byte aspectMx) {
 
     return aspectJmri ;
 }
-
