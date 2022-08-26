@@ -141,12 +141,7 @@ struct LightFunction {
   LightSign sign : 4;
   static_assert (_lightsign_last <= 16, "Too many signs, must fit in 4 bits (LightFunction::sign)");
 
-  /**
-   * If true, the light alternates with a sign-specific period
-   */
-  boolean alternating : 1;
-
-  /**
+ /**
    * True to change the light towards OFF, false to change towards ON.
    */
   boolean off : 1;
@@ -157,10 +152,10 @@ struct LightFunction {
   boolean end : 1;
 
   // Default initializer: output off(=true), final brightness (end=true), not alternating
-  LightFunction() : sign(inactive), alternating(false), off(true), end(true) {}
+  LightFunction() : sign(inactive), off(true), end(true) {}
 
   // Normal construction
-  LightFunction(LightSign sign, boolean alt, boolean initOff) : sign(sign), alternating(alt), off(initOff), end(false) {}
+  LightFunction(LightSign sign, boolean alt, boolean initOff) : sign(sign), off(initOff), end(false) {}
 
   LightFunction(byte data) { *((byte*)(void*)this) = data; }
 
@@ -539,6 +534,68 @@ void processOutputLight(byte nrOutput) {
   }
 }
 
+void changeLightState2(byte lightOutput, struct LightFunction newState) {
+  if (lightOutput >= NUM_OUTPUTS) {
+    return;
+  }
+  LightFunction& bs = bublState2[lightOutput];
+
+  boolean wasOff = bs.off;
+  if (bs.sign == newState.sign) {
+    // exception: fixed(on) != fixed(off)
+    if (newState.sign != fixed || newState.off == wasOff) {
+      return;
+    }
+  }
+  
+  if (newState.sign == fixed) {
+    if (newState.off != wasOff) {
+      resetStartTime(lightOutput);
+    }
+    bs = newState;
+  } else {
+    resetStartTime(lightOutput);
+    bs = newState;
+    bs.off = !wasOff;
+  }
+}
+
+void processBulbBlinking(byte nrOutput, int blinkDelay) {
+  boolean off = bublState2[nrOutput].off;
+  int elapsed = timeElapsedForBulb(nrOutput);
+  if (elapsed > 0xff00) {
+    // just to be sure, elapsed time is too large, ignore the light.
+    return;
+  }
+  if (elapsed > fadeTimeLight[10]) {
+    if (!bublState2[nrOutput].end) {
+      if (debugLightFlip) {
+        Serial.print("Light elapsed "); Serial.println(nrOutput); 
+      }
+      bublState2[nrOutput].end = true;
+      digitalWrite(OUTPUT_PIN[nrOutput], off ? LOW : HIGH);
+    }
+
+    if (blinkDelay > 0) {
+      if (elapsed > blinkDelay) {
+        bublState2[nrOutput].end = false;
+        bublState2[nrOutput].off = !off;
+        resetStartTime(nrOutput);
+      }
+    } else {
+      // disable state changes.
+      lightStartTimeBubl[nrOutput] = 0;
+    }
+    return;
+  }
+  if (off) {
+    processFadeOff(nrOutput);
+  } else {
+    processFadeOn(nrOutput);
+  }
+}
+
+
 /**********************************************************************************
  * 
  */
@@ -817,26 +874,24 @@ const SignalSet32 csdMechanicalAspects PROGMEM = {
   {   STRIP_OFF,                                STRIP_OFF                     },    // Aspect 31: ---------------------------           
 };
 
-
-
 void signalMastChangeAspectCsdBasic(int nrSignalMast, byte newAspect) {
-  signalMastChangeAspect(&(csdBasicAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
+  signalMastChangeAspect((int)&(csdBasicAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
 }
 
 void signalMastChangeAspectCsdIntermediate(int nrSignalMast, byte newAspect) {
-  signalMastChangeAspect(&(csdIntermediateAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
+  signalMastChangeAspect((int)&(csdIntermediateAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
 }
 
 void signalMastChangeAspectCsdEmbedded(int nrSignalMast, byte newAspect) {
-  signalMastChangeAspect(&(csdEmbeddedAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
+  signalMastChangeAspect((int)&(csdEmbeddedAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
 }
 
 void signalMastChangeAspectSzdcBasic(int nrSignalMast, byte newAspect) {
-  signalMastChangeAspect(&(szdcBasicAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
+  signalMastChangeAspect((int)&(szdcBasicAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
 }
 
 void signalMastChangeAspectCsdMechanical(int nrSignalMast, byte newAspect) {
-  signalMastChangeAspect(&(csdMechanicalAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
+  signalMastChangeAspect((int)&(csdMechanicalAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
 }
 
 void signalMastChangeAspect(int progMemOffset, int tableSize, int nrSignalMast, byte newAspect) {
@@ -873,66 +928,6 @@ void resetStartTime(int lightOutput) {
     v++;
   }
   lightStartTimeBubl[lightOutput] = v;
-}
-
-void changeLightState2(byte lightOutput, struct LightFunction newState) {
-  if (lightOutput >= NUM_OUTPUTS) {
-    return;
-  }
-  LightFunction& bs = bublState2[lightOutput];
-
-  boolean wasOff = bs.off;
-  if (bs.sign == newState.sign) {
-    // exception: fixed(on) != fixed(off)
-    if (newState.sign != fixed || newState.off == wasOff) {
-      return;
-    }
-  }
-
-  if (newState.sign == fixed) {
-    if (newState.off != wasOff) {
-      resetStartTime(lightOutput);
-    }
-    bs = newState;
-  } else {
-    resetStartTime(lightOutput);
-    bs = newState;
-    bs.off = !wasOff;
-  }
-}
-
-void processBulbBlinking(byte nrOutput, int blinkDelay) {
-  boolean off = bublState2[nrOutput].off;
-  int elapsed = timeElapsedForBulb(nrOutput);
-  if (elapsed > 0xff00) {
-    // just to be sure, elapsed time is too large, ignore the light.
-    return;
-  }
-  if (elapsed > fadeTimeLight[10]) {
-    if (!bublState2[nrOutput].end) {
-      if (debugLightFlip) {
-        Serial.print("Light elapsed "); Serial.println(nrOutput); 
-      }
-      bublState2[nrOutput].end = true;
-      digitalWrite(OUTPUT_PIN[nrOutput], off ? LOW : HIGH);
-    }
-
-    if (blinkDelay > 0) {
-      if (elapsed > blinkDelay) {
-        bublState2[nrOutput].end = false;
-        bublState2[nrOutput].off = !off;
-        resetStartTime(nrOutput);
-      }
-    } else {
-      lightStartTimeBubl[nrOutput] = 0;
-    }
-    return;
-  }
-  if (off) {
-    processFadeOff(nrOutput);
-  } else {
-    processFadeOn(nrOutput);
-  }
 }
 
 /**********************************************************************************
