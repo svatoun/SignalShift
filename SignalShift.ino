@@ -18,14 +18,17 @@
 const boolean debugFadeOnOff = false;
 const boolean debugLightFlip = false;
 const boolean debugAspects = false;
+const boolean debugLights = false;
 
 const uint8_t SW_VERSION = 12;
 
 // --------- HARDWARE PIN WIRING / SETUP --------------------
 const byte ACK_BUSY_PIN = 13;
 
+const boolean ledOnIsLow = true;
+
 /* ------------ Supported CV numbers ------------------ */
-const uint16_t CV_AUXILIARY_ACTIVATION = 2;
+const uint16_t CV_AUXILIARY_ACTIVATION = 3;
 
 const uint16_t CV_DECODER_KEY = 15;
 const uint16_t CV_DECODER_LOCK = 16;
@@ -125,10 +128,11 @@ enum LightSign : byte {
 };
 
 #define LON (fixed)
-#define LOFF (fixed | 0x20)
+// !!! KEEP IN SYNC WITH BIT POSITION of "off" bitfield in LightFunction struct !!!
+#define LOFF (fixed | 0x10)
 #define L(n) (n)
-#define B(n) (n | 0x10)
-
+// originally, blinking had a bit flag, but that's not necessary
+#define B(n) (n)
 
 /**
  * Describes the state of a light output. Defined as a structure for
@@ -155,7 +159,7 @@ struct LightFunction {
   LightFunction() : sign(inactive), off(true), end(true) {}
 
   // Normal construction
-  LightFunction(LightSign sign, boolean alt, boolean initOff) : sign(sign), off(initOff), end(false) {}
+  LightFunction(LightSign sign, boolean initOff) : sign(sign), off(initOff), end(false) {}
 
   LightFunction(byte data) { *((byte*)(void*)this) = data; }
 
@@ -252,6 +256,7 @@ uint8_t fadeRate;
  * Setup Arduino.
  */
 void setup() {
+  Serial.begin(115200);
 
   // initialize the digital pins as an outputs
   pinMode(ACK_BUSY_PIN, OUTPUT);
@@ -274,7 +279,8 @@ void setup() {
   }
 
   initLocalVariables();
-
+  Serial.print(F("UNI16ARD-NAV-MX version ")); Serial.print(SW_VERSION); Serial.println(F(", Copyright (c) 2018, Petr Sidlo <sidlo64@seznam.cz>"));
+  Serial.println(F("Starting..."));
 }
 
 /**************************************************************************
@@ -499,7 +505,7 @@ unsigned int timeElapsedForBulb(byte nrOutput) {
   int span;
 
   if (start > cur) {
-    span = (unsigned int)(0x10000 - start) + cur;
+    span = (unsigned int)((0x10000 - start) + cur);
   } else {
     span = cur - start;
   }
@@ -534,11 +540,14 @@ void processOutputLight(byte nrOutput) {
   }
 }
 
-void changeLightState2(byte lightOutput, struct LightFunction newState) {
+void changeLightState2(byte lightOutput, const struct LightFunction& newState) {
   if (lightOutput >= NUM_OUTPUTS) {
     return;
   }
   LightFunction& bs = bublState2[lightOutput];
+  if (debugLights) {
+    Serial.print(F("Change light #")); Serial.print(lightOutput); Serial.print(F(" curState: ")); Serial.print(bs.sign); Serial.print(F(", off = ")); Serial.print(bs.off); Serial.print(F(", newstate: ")); Serial.print(newState.sign); Serial.print(F(", off = ")); Serial.println(newState.off); 
+  }
 
   boolean wasOff = bs.off;
   if (bs.sign == newState.sign) {
@@ -549,14 +558,15 @@ void changeLightState2(byte lightOutput, struct LightFunction newState) {
   }
   
   if (newState.sign == fixed) {
-    if (newState.off != wasOff) {
-      resetStartTime(lightOutput);
-    }
+    resetStartTime(lightOutput);
     bs = newState;
   } else {
     resetStartTime(lightOutput);
     bs = newState;
     bs.off = !wasOff;
+  }
+  if (debugLights) {
+    Serial.print(F("Change light #")); Serial.print(lightOutput);Serial.print(F(" newState: ")); Serial.print(bublState2[lightOutput].sign); Serial.print(F(", off = ")); Serial.println(bublState2[lightOutput].off); 
   }
 }
 
@@ -570,7 +580,7 @@ void processBulbBlinking(byte nrOutput, int blinkDelay) {
   if (elapsed > fadeTimeLight[10]) {
     if (!bublState2[nrOutput].end) {
       if (debugLightFlip) {
-        Serial.print("Light elapsed "); Serial.println(nrOutput); 
+        Serial.print("Light elapsed "); Serial.print(nrOutput); Serial.print(F( " off = ")); Serial.println(off);
       }
       bublState2[nrOutput].end = true;
       digitalWrite(OUTPUT_PIN[nrOutput], off ? LOW : HIGH);
@@ -578,12 +588,18 @@ void processBulbBlinking(byte nrOutput, int blinkDelay) {
 
     if (blinkDelay > 0) {
       if (elapsed > blinkDelay) {
+        if (debugLightFlip) {
+          Serial.print("Light blinked "); Serial.println(nrOutput); 
+        }
         bublState2[nrOutput].end = false;
         bublState2[nrOutput].off = !off;
         resetStartTime(nrOutput);
       }
     } else {
       // disable state changes.
+      if (debugLightFlip) {
+        Serial.print("Light fixed "); Serial.print(nrOutput); Serial.print(F(" state ")); Serial.println(!off);
+      }
       lightStartTimeBubl[nrOutput] = 0;
     }
     return;
@@ -933,270 +949,58 @@ void resetStartTime(int lightOutput) {
 /**********************************************************************************
  *
  */
-void processFadeOn(byte nrOutput) {
+void processFadeOnOrOff(byte nrOutput, boolean fadeOn) {
   int idx;
   int elapsed = timeElapsedForBulb(nrOutput);
+
+  int limit = (sizeof(fadeTimeLight) / sizeof(fadeTimeLight[0]));
+
   if (debugFadeOnOff) {
-    Serial.print("Fade ON, output="); Serial.print(nrOutput); Serial.print("idx="); Serial.print(idx); Serial.print(", counters: "); 
+    if (fadeOn) {
+      Serial.print("Fade ON, output="); 
+    } else {
+      Serial.print("Fade OFF, output="); 
+    }
+    Serial.print(nrOutput); Serial.print(F(" pin ")); Serial.print(OUTPUT_PIN[nrOutput]);   
+  }
+  if (elapsed > fadeTimeLight[limit - 1]) {
+    if (debugFadeOnOff) {
+      Serial.println("Reached limit");
+    }
+    digitalWrite(OUTPUT_PIN[nrOutput], fadeOn ? HIGH : LOW);
+    return;
+  }
+  for (idx = 0; idx < limit && elapsed > fadeTimeLight[idx]; idx++) ;
+  // idx will be one higher than last less elapsed time, so if elapsed > fadeTimeLight[idx], then becomes 2.
+  if (idx >= limit) {
+    // should never happen, but prevents out-of-range access
+    digitalWrite(OUTPUT_PIN[nrOutput], fadeOn ? HIGH : LOW);
+    return;
+  }
+  // writable reference !!
+  int &counter = lightCounter[nrOutput];
+  
+  if (debugFadeOnOff) {
+    Serial.print(" idx="); Serial.print(idx); Serial.print(", counters: "); 
     Serial.print(FADE_COUNTER_LIGHT_1[idx]); Serial.print("/"); Serial.print(FADE_COUNTER_LIGHT_2[idx]); 
-    Serial.print(", time="); Serial.print(elapsed);
+    Serial.print(", time="); Serial.println(elapsed);
   }
-  if (elapsed > fadeTimeLight[10]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[11]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[11]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[9]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[10]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[10]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[8]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[9]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[9]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[7]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[8]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[8]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[6]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[7]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[7]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[5]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[6]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[6]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[4]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[5]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[5]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[3]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[4]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[4]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[2]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[3]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[3]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[1]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[2]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[2]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[0]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[1]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[1]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else { if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[0]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[0]) {
-      lightCounter[nrOutput] = 0;
-    }
+  boolean high = (counter <= FADE_COUNTER_LIGHT_1[idx]) == fadeOn;
+  digitalWrite(OUTPUT_PIN[nrOutput], high ? HIGH : LOW);
+  if (++counter >= FADE_COUNTER_LIGHT_2[idx]) {
+    counter = 0;
   }
+}
+
+void processFadeOn(byte nrOutput) {
+  processFadeOnOrOff(nrOutput, true);
 }
 
 /**********************************************************************************
  *
  */
 void processFadeOff(byte nrOutput) {
-
-  int idx;
-  int limit = (sizeof(fadeTimeLight) / sizeof(fadeTimeLight[0]));
-  int elapsed = timeElapsedForBulb(nrOutput);
-  if (debugFadeOnOff) {
-    Serial.print("Fade OFF, output="); Serial.print(nrOutput); Serial.print("idx="); Serial.print(", counters: "); 
-    Serial.print(FADE_COUNTER_LIGHT_1[idx]); Serial.print("/"); Serial.print(FADE_COUNTER_LIGHT_2[idx]); 
-    Serial.print(", time="); Serial.print(elapsed);
-  }
-  if (elapsed > fadeTimeLight[10]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[11]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[11]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[9]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[10]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[10]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[8]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[9]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[9]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[7]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[8]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[8]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[6]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[7]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[7]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[5]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[6]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[6]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[4]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[5]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[5]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[3]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[4]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[4]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[2]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[3]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[3]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[1]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[2]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[2]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else if (elapsed > fadeTimeLight[0]) {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[1]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[1]) {
-      lightCounter[nrOutput] = 0;
-    }
-  } else {
-    if (lightCounter[nrOutput] <= FADE_COUNTER_LIGHT_1[0]) {
-      digitalWrite(OUTPUT_PIN[nrOutput], LOW);
-    } else {
-      digitalWrite(OUTPUT_PIN[nrOutput], HIGH);
-    }
-    lightCounter[nrOutput]++;
-    if (lightCounter[nrOutput] >= FADE_COUNTER_LIGHT_2[0]) {
-      lightCounter[nrOutput] = 0;
-    }
-  }
+  processFadeOnOrOff(nrOutput, false);
 }
 
 /**************************************************************************
