@@ -157,8 +157,14 @@ void processTerminal() {
   }
 }
 
-
 int nextNumber() {
+  return nextNumber(false);
+}
+
+int inputDelim = 0;
+
+int nextNumber(boolean extDelims) {
+  inputDelim = 0;
   if ((*inputPos) == 0) {
     return -2;
   }
@@ -170,11 +176,21 @@ int nextNumber() {
   if (c < '0' || c > '9') {
     return -1;
   }
-
   char* p = strchr(inputPos, ':');
+  char* p2 = extDelims ? strchr(inputPos, '-') : NULL;
   if (p == NULL) {
-    p = inputEnd - 1;
+    if (p2 != NULL) {
+      p = p2;
+      inputDelim = *p;
+      *p = 0;
+    } else {
+      p = inputEnd - 1;
+    }
   } else {
+    if (p2 != NULL && p2 < p) {
+      p = p2;
+      inputDelim = *p;
+    }
     *p = 0;
   }
   char* ne;
