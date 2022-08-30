@@ -1,14 +1,16 @@
 /****************************************************************************
- *  DCC Signal decoder for UNI16ARD board.
- *  Arduino New Pro Mini
+ *  DCC Signal decoder for Arduino Nano / Arduino Pro Mini boards.
+
  *  use NmraDcc library from http://mrrwa.org/
- *  homepage https://sites.google.com/site/sidloweb/
- *  e-shop http://dccdoma.eshop-zdarma.cz/
  *
- *  author Petr Šídlo
+ *  Original code author: Petr Šídlo
  *  date 2018-09-04
  *  revision 1.2
- *  license GPLv2
+ *  Original license GPLv2
+ *  homepage https://sites.google.com/site/sidloweb/
+ *
+ *  Author modifications: svatopluk.dedic@gmail.com
+ *  RELICENSED to Apache Public License 2.0 with the permission of the Original Author / Copyright holder.
  */
 
 #include "Arduino.h"
@@ -19,6 +21,7 @@
 // ------- Diagnostic setup -----------
 const boolean debugFadeOnOff = false;
 const boolean debugLightFlip = false;
+const boolean debugLights = false;
 const boolean debugAspects = false;
 
 const uint8_t SW_VERSION = 12;
@@ -30,6 +33,8 @@ const byte ACK_BUSY_PIN = 10;
 const byte ShiftPWM_dataPin = 11;
 const byte ShiftPWM_clockPin = 13;
 const byte ShiftPWM_latchPin = 8;
+
+// min/max brightness for PWM. PWM is in range 0-255.
 unsigned char maxBrightness = 255;
 unsigned char minBrightness = 0;
 unsigned char pwmFrequency = 100;
@@ -41,7 +46,7 @@ const bool ShiftPWM_invertOutputs = true;
 #include <ShiftPWM.h> 
 
 /* ------------ Supported CV numbers ------------------ */
-const uint16_t CV_AUXILIARY_ACTIVATION = 2;
+const uint16_t CV_AUXILIARY_ACTIVATION = 1;
 const uint16_t CV_DECODER_KEY = 15;
 const uint16_t CV_DECODER_LOCK = 16;
 const uint16_t CV_ROCO_ADDRESS = 34;
@@ -56,7 +61,7 @@ const uint16_t CV_PROD_ID_4 = 50;
 
 /* ------------- Default values for supported CVs ---------- */
 
-const uint8_t VALUE_AUXILIARY_ACTIVATION = 6;  // change this value to restore CV defaults after upload sketch
+const uint8_t VALUE_AUXILIARY_ACTIVATION = 3;  // change this value to restore CV defaults after upload sketch
 const uint8_t VALUE_DECODER_KEY = 0;        // unlocked decoder
 const uint8_t VALUE_DECODER_LOCK = 0;       // unlocked decoder
 
@@ -78,25 +83,33 @@ const uint8_t VALUE_PROD_ID_4 = 4;              // productID #4
 const int maxOutputsPerMast = 10;
 
 /**
+ * Maximum aspects supported per one signal table.
+ */
+const int maxAspects = 32;
+
+/**
  * Maximum number of outputs. This value does not affect the CV layout, but is used as a dimension of status arrays.
  */
 const int NUM_OUTPUTS = 80;
-
-const int NUM_8BIT_SHIFT_REGISTERS = (NUM_OUTPUTS + 7) / 8;
 
 /**
  * Maximum number of signal masts supported by a single decoder.
  */
 const int NUM_SIGNAL_MAST = 16;
 
-const int SEGMENT_SIZE = 13;
+const int NUM_8BIT_SHIFT_REGISTERS = (NUM_OUTPUTS + 7) / 8;
+
+const int SEGMENT_SIZE = maxOutputsPerMast + 3;
+
+const int maxAspectBits = 5;
+static_assert (maxAspects <= (1 << maxAspectBits), "Too many aspects, do not fit in 5 bits");
 
 const byte ONA           = NUM_OUTPUTS; // OUTPUT_NOT_ASSIGNED
 
 const uint16_t START_CV_OUTPUT = 128;
 const uint16_t END_CV_OUTPUT = START_CV_OUTPUT + (SEGMENT_SIZE * NUM_SIGNAL_MAST - 1);
 
-const uint16_t START_CV_ASPECT_TABLE = 768;
+const uint16_t START_CV_ASPECT_TABLE = 512;
 
 const uint8_t INIT_DECODER_ADDRESS = 100;   // ACCESSORY DECODER ADDRESS default
 uint16_t thisDecoderAddress = 100;          // ACCESSORY DECODER ADDRESS
@@ -134,9 +147,10 @@ enum LightSign : byte {
 };
 
 #define LON (fixed)
-#define LOFF (fixed | 0x20)
+#define LOFF (fixed | 0x10)
 #define L(n) (n)
-#define B(n) (n | 0x10)
+// originally, blinking had a bit flag, but that's not necessary
+#define B(n) (n)
 
 
 /**
@@ -164,7 +178,7 @@ struct LightFunction {
   LightFunction() : sign(inactive), off(true), end(true) {}
 
   // Normal construction
-  LightFunction(LightSign sign, boolean alt, boolean initOff) : sign(sign), off(initOff), end(false) {}
+  LightFunction(LightSign sign, boolean initOff) : sign(sign), off(initOff), end(false) {}
 
   LightFunction(byte data) { *((byte*)(void*)this) = data; }
 
@@ -192,6 +206,7 @@ struct MastConfig {
   byte  defaultAspect;
   byte  numberOfAddresses;
 
+/*
   MastConfig(const byte (&aOutputs)[maxOutputsPerMast], byte aSignalSet, byte aDefaultAspect, byte aNumberOfAddresses) : signalSet(aSignalSet), defaultAspect(aDefaultAspect), numberOfAddresses(aNumberOfAddresses) {
     memcpy(outputs, aOutputs, sizeof(outputs));
   }
@@ -199,7 +214,9 @@ struct MastConfig {
   MastConfig(const MastConfig& other) : signalSet(other.signalSet), defaultAspect(other.defaultAspect), numberOfAddresses(other.numberOfAddresses) {
     memcpy(outputs, other.outputs, sizeof(outputs));
   }
+*/
 };
+static_assert (sizeof(MastConfig) == SEGMENT_SIZE, "Mismatch in MastConfig / SEGMENT_SIZE");
 
 byte signalMastLightYellowUpperOutput[NUM_SIGNAL_MAST] = { 0, 5, 10, 15, 20, 25, ONA, ONA };   // yellow upper
 byte signalMastLightGreenOutput[NUM_SIGNAL_MAST]       = { 1, 6, 11, 16, 21, 26, ONA, ONA };   // green
@@ -264,6 +281,8 @@ uint8_t fadeRate;
  */
 void setup() {
   Serial.begin(115200);
+  Serial.print(F("UNI16ARD-NAV-Shift version ")); Serial.println(SW_VERSION); 
+  Serial.println(F("Copyright (c) 2018, Petr Sidlo <sidlo64@seznam.cz>\nCopyright (c) 2022, Svatopluk Dedic <svatopluk.dedic@gmail.com>, APL 2.0 License"));
   Serial.println("Booting...");
 
   // initialize the digital pins as an outputs
@@ -271,21 +290,11 @@ void setup() {
   digitalWrite(ACK_BUSY_PIN, LOW);
 
   setupShiftPWM();
-  Serial.println("setupShiftPWM Done.");
-//  for (int i = 0; i < NUM_OUTPUTS; i++) {
-//    pinMode(OUTPUT_PIN[i], OUTPUT);
-//    digitalWrite(OUTPUT_PIN[i], LOW);
-//  }
-//
   // Setup which External Interrupt, the Pin it's associated with that we're using and enable the Pull-Up
   Dcc.pin(0, 2, 1);
 
-  Serial.println("Dcc setup done.");
-
   // Call the main DCC Init function to enable the DCC Receiver
   Dcc.initAccessoryDecoder( MAN_ID_DIY, SW_VERSION, FLAGS_OUTPUT_ADDRESS_MODE, 0);
-
-  Serial.println("Accessory setup done.");
 
   uint8_t cvVersion = Dcc.getCV(CV_AUXILIARY_ACTIVATION);
   if (cvVersion != VALUE_AUXILIARY_ACTIVATION) {
@@ -293,9 +302,10 @@ void setup() {
   }
 
   initLocalVariables();
-  Serial.println("Setup Done.");
 
   ModuleChain::invokeAll(initialize);
+
+  Serial.print(F("Driving max ")); Serial.print(NUM_OUTPUTS); Serial.print(F(" outputs from max ")); Serial.print(NUM_SIGNAL_MAST); Serial.println(F(" masts"));
 
   initTerminal();
   setupTerminal();
@@ -321,7 +331,6 @@ void setupShiftPWM() {
  */
 void loop() {
   processTerminal();
-
   currentTime = millis();
 
   Dcc.process();
@@ -386,6 +395,11 @@ const CVPair FactoryDefaultCVs[] = {
     { CV_PROD_ID_4, VALUE_PROD_ID_4 },
   };
 
+// must be represented as bytes, as array initialized by MastConfig initializers cannot be stored in PROGMEM.
+const MastConfig initMasts[1] PROGMEM = {
+  { { 0,   1,   2,  3, 4, ONA, ONA, ONA, ONA, ONA }, 0,  0, 5 }
+};
+
 const uint8_t factorySignalMastOutputs[] PROGMEM = {      
     0,   1,   2,  3, 4, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 0
     5,   6,   7,  8, 9, ONA, ONA, ONA, ONA, ONA, 0,  0, 5,  // signal mast 1
@@ -397,10 +411,14 @@ const uint8_t factorySignalMastOutputs[] PROGMEM = {
     ONA,  ONA,  ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 5   // signal mast 7
 } ;
 
-static_assert (sizeof(MastConfig) == SEGMENT_SIZE, "Inconsistency between MastConfig and init data");
+const uint8_t noSignalMastOutputs[] PROGMEM = {    
+    ONA,  ONA,  ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0,  0, 5   // signal mast 7
+};
+
+static_assert (sizeof(factorySignalMastOutputs) == sizeof(MastConfig) * 8, "Inconsistency between MastConfig and init data");
 
 void setFactoryDefault() {
-
+  Serial.println(F("Resetting to factory defaults"));
   uint8_t FactoryDefaultCVSize = sizeof(FactoryDefaultCVs) / sizeof(CVPair);
 
   for (uint16_t i = 0; i < FactoryDefaultCVSize; i++) {
@@ -410,6 +428,12 @@ void setFactoryDefault() {
   int cvNumber = START_CV_OUTPUT;
   for (int i = 0; i < sizeof(factorySignalMastOutputs); i++, cvNumber++) {
     Dcc.setCV(cvNumber, pgm_read_byte_near(factorySignalMastOutputs + i));
+  }
+
+  for (int i = sizeof(factorySignalMastOutputs) / SEGMENT_SIZE; i < NUM_SIGNAL_MAST; i++) {
+    for (int j = 0; j < sizeof(noSignalMastOutputs); j++, cvNumber++) {
+      Dcc.setCV(cvNumber, pgm_read_byte_near(noSignalMastOutputs + j));
+    }
   }
 
   uint16_t OutputCV = START_CV_ASPECT_TABLE ;
@@ -504,8 +528,13 @@ void initLocalVariablesSignalMast() {
   }
 
   int idx = 0 ;
-  for (int i = 0; i < numSignalNumber; i++) {               
-    for (int j = 0; j < signalMastNumberAddress[i]; j++) {  
+  for (int i = 0; i < numSignalNumber; i++) {       
+    int addrs = signalMastNumberAddress[i];
+    if (addrs > maxAspectBits) {
+      Serial.print(F("Mast #")); Serial.print(i); Serial.print(F(" Invalid number of addresses: ")); Serial.println(addrs);
+      addrs = 1;
+    }
+    for (int j = 0; j < addrs; j++) {  
       signalMastNumberIdx[idx] = i ;
       posNumber[idx] = j ;
       signalMastChangePos(signalMastNumberIdx[idx], posNumber[idx], 1) ;
@@ -537,7 +566,7 @@ unsigned int timeElapsedForBulb(byte nrOutput) {
   int span;
 
   if (start > cur) {
-    span = (unsigned int)(0x10000 - start) + cur;
+    span = (unsigned int)((0x10000 - start) + cur);
   } else {
     span = cur - start;
   }
@@ -577,6 +606,9 @@ void changeLightState2(byte lightOutput, struct LightFunction newState) {
     return;
   }
   LightFunction& bs = bublState2[lightOutput];
+  if (debugLights) {
+    Serial.print(F("Change light #")); Serial.print(lightOutput); Serial.print(F(" curState: ")); Serial.print(bs.sign); Serial.print(F(", off = ")); Serial.print(bs.off); Serial.print(F(", newstate: ")); Serial.print(newState.sign); Serial.print(F(", off = ")); Serial.println(newState.off); 
+  }
 
   boolean wasOff = bs.off;
   if (bs.sign == newState.sign) {
@@ -586,15 +618,13 @@ void changeLightState2(byte lightOutput, struct LightFunction newState) {
     }
   }
   
-  if (newState.sign == fixed) {
-    if (newState.off != wasOff) {
-      resetStartTime(lightOutput);
-    }
-    bs = newState;
-  } else {
-    resetStartTime(lightOutput);
-    bs = newState;
+  resetStartTime(lightOutput);
+  bs = newState;
+  if (newState.sign != fixed) {
     bs.off = !wasOff;
+  }
+  if (debugLights) {
+    Serial.print(F("Change light #")); Serial.print(lightOutput);Serial.print(F(" newState: ")); Serial.print(bublState2[lightOutput].sign); Serial.print(F(", off = ")); Serial.println(bublState2[lightOutput].off); 
   }
 }
 
@@ -608,7 +638,7 @@ void processBulbBlinking(byte nrOutput, int blinkDelay) {
   if (elapsed > fadeTimeLight[10]) {
     if (!bublState2[nrOutput].end) {
       if (debugLightFlip) {
-        Serial.print("Light elapsed "); Serial.println(nrOutput); 
+        Serial.print("Light elapsed "); Serial.print(nrOutput); Serial.print(F( " off = ")); Serial.println(off);
       }
       bublState2[nrOutput].end = true;
       ShiftPWM.SetOne(nrOutput, off ? minBrightness : maxBrightness);
@@ -616,12 +646,18 @@ void processBulbBlinking(byte nrOutput, int blinkDelay) {
 
     if (blinkDelay > 0) {
       if (elapsed > blinkDelay) {
+        if (debugLightFlip) {
+          Serial.print("Light blinked "); Serial.println(nrOutput); 
+        }
         bublState2[nrOutput].end = false;
         bublState2[nrOutput].off = !off;
         resetStartTime(nrOutput);
       }
     } else {
       // disable state changes.
+      if (debugLightFlip) {
+        Serial.print("Light fixed "); Serial.print(nrOutput); Serial.print(F(" state ")); Serial.println(!off);
+      }
       lightStartTimeBubl[nrOutput] = 0;
     }
     return;
@@ -638,7 +674,14 @@ void processBulbBlinking(byte nrOutput, int blinkDelay) {
  * 
  */
 void signalMastChangePos(int nrSignalMast, uint16_t pos, uint8_t Direction) {
-
+  if (nrSignalMast >= NUM_SIGNAL_MAST) {
+    Serial.print(F("Error: mastChangePos mast out of range: ")); Serial.println(nrSignalMast);
+    return;
+  }
+  if (pos >= maxOutputsPerMast) {
+    Serial.print(F("Error: mastChangePos pos out of range")); Serial.println(pos);
+    return;
+  }
   byte newAspectIdx = signalMastLastCode[nrSignalMast] ;
 
   bitWrite(newAspectIdx, pos, Direction) ;
@@ -662,6 +705,11 @@ void signalMastChangePos(int nrSignalMast, uint16_t pos, uint8_t Direction) {
   }
 
   if (signalMastLastCode[nrSignalMast] == newAspectIdx) {
+    return;
+  }
+
+  if (newAspectIdx >= maxAspects) {
+    Serial.print(F("Error: newAspectIdx out of range")); Serial.println(newAspectIdx);
     return;
   }
 
@@ -935,6 +983,10 @@ void signalMastChangeAspect(int progMemOffset, int tableSize, int nrSignalMast, 
   if (debugAspects) {
     Serial.print(F("Change mast ")); Serial.print(nrSignalMast); Serial.print(F(" to aspect ")); Serial.println(newAspect);
   }
+  if (nrSignalMast < 0 || nrSignalMast >= NUM_SIGNAL_MAST) {
+    Serial.print(F("Invalid mast ")); Serial.println(nrSignalMast);
+    return;
+  }
   if (newAspect >= tableSize) {
     Serial.print(F("Invalid aspect ")); Serial.println(newAspect);
     return;
@@ -970,8 +1022,54 @@ void resetStartTime(int lightOutput) {
 /**********************************************************************************
  *
  */
-void processFadeOn(byte nrOutput) {
+void processFadeOnOrOff(byte nrOutput, boolean fadeOn) {
+  int idx;
+  int elapsed = timeElapsedForBulb(nrOutput);
 
+  int limit = (sizeof(fadeTimeLight) / sizeof(fadeTimeLight[0]));
+
+  if (debugFadeOnOff) {
+    if (fadeOn) {
+      Serial.print("Fade ON, output="); 
+    } else {
+      Serial.print("Fade OFF, output="); 
+    }
+    Serial.print(nrOutput);
+  }
+  if (elapsed > fadeTimeLight[limit - 1]) {
+    if (debugFadeOnOff) {
+      Serial.println("Reached limit");
+    }
+    ShiftPWM.SetOne(nrOutput, fadeOn ? maxBrightness : minBrightness);
+    return;
+  }
+  for (idx = 0; idx < limit && elapsed > fadeTimeLight[idx]; idx++) ;
+  // idx will be one higher than last less elapsed time, so if elapsed > fadeTimeLight[idx], then becomes 2.
+  if (idx >= limit) {
+    // should never happen, but prevents out-of-range access
+    ShiftPWM.SetOne(nrOutput, fadeOn ? maxBrightness : minBrightness);
+    return;
+  }
+  
+  int span = (maxBrightness - minBrightness);
+  int pwm = ((span * FADE_COUNTER_LIGHT_1[idx]) / FADE_COUNTER_LIGHT_2[idx]);
+  if (fadeOn) {
+    pwm += minBrightness;
+  } else {
+    pwm = maxBrightness - pwm;
+  }
+  if (debugFadeOnOff) {
+    Serial.print(" idx="); Serial.print(idx); Serial.print(", counters: "); 
+    Serial.print(FADE_COUNTER_LIGHT_1[idx]); Serial.print("/"); Serial.print(FADE_COUNTER_LIGHT_2[idx]); 
+    Serial.print(", pwm = "); Serial.print(pwm);
+    Serial.print(", time="); Serial.println(elapsed);
+  }
+  ShiftPWM.SetOne(nrOutput, pwm);
+}
+
+void processFadeOn(byte nrOutput) {
+  processFadeOnOrOff(nrOutput, true);
+  return;
   int idx = 0;
   int limit = (sizeof(fadeTimeLight) / sizeof(fadeTimeLight[0]));
 
@@ -994,6 +1092,8 @@ void processFadeOn(byte nrOutput) {
  *
  */
 void processFadeOff(byte nrOutput) {
+  processFadeOnOrOff(nrOutput, false);
+  return;
   int idx;
   int limit = (sizeof(fadeTimeLight) / sizeof(fadeTimeLight[0]));
   int elapsed = timeElapsedForBulb(nrOutput);
