@@ -46,7 +46,7 @@ const bool ShiftPWM_invertOutputs = true;
 #include <ShiftPWM.h> 
 
 /* ------------ Supported CV numbers ------------------ */
-const uint16_t CV_AUXILIARY_ACTIVATION = 1;
+const uint16_t CV_AUXILIARY_ACTIVATION = 2;
 const uint16_t CV_DECODER_KEY = 15;
 const uint16_t CV_DECODER_LOCK = 16;
 const uint16_t CV_ROCO_ADDRESS = 34;
@@ -516,7 +516,6 @@ void initLocalVariablesSignalMast() {
     counter++;
 
     signalMastDefaultAspectIdx[i] = defaultAspectIdx ;
-    
     signalMastNumberAddress[i] = Dcc.getCV(counter); 
     counter++;
     
@@ -747,6 +746,11 @@ void signalMastChangeAspect(int nrSignalMast, byte newAspect) {
 
   if (signalMastCurrentAspect[nrSignalMast] == newAspect) {
     return;
+  }
+
+  if (newAspect >= maxAspects) {
+    // all off
+    signalMastChangeAspectCsdMechanical(nrSignalMast, 1) ;
   }
   
   switch (signalMastSignalSet[nrSignalMast]) {
