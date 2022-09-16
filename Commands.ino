@@ -516,6 +516,36 @@ void commandMapAspects() {
   }
 }
 
+void commandOverride() {
+  int n = nextNumber(true);
+  if (n < 1 || n > NUM_OUTPUTS) {
+    Serial.println(F("Invalid output"));
+    return;
+  }
+  int to = n;
+  if (inputDelim == '-') {
+    to = nextNumber();
+    if (to < n || to > NUM_OUTPUTS) {
+      Serial.println(F("Bad range"));
+      return;
+    }
+  }
+  int level = nextNumber();
+  if (level > 255) {
+      Serial.println(F("Bad pwm"));
+      return;
+  }
+  for (int i = n - 1; i < to; i++) {
+    if (level < 0) {
+      overrides[i] = false;
+      ShiftPWM.SetOne(numberToPhysOutput(i), 0);
+    } else {
+      overrides[i] = true;
+      ShiftPWM.SetOne(numberToPhysOutput(i), level);
+    }
+  }
+}
+
 boolean handleSignals(ModuleCmd cmd) {
   switch (cmd) {
     case initialize:
@@ -529,6 +559,7 @@ boolean handleSignals(ModuleCmd cmd) {
       registerLineCommand("OUT", &commandMapOutput);
       registerLineCommand("END", &commandEnd);
       registerLineCommand("MAP", &commandMapAspects);
+      registerLineCommand("OVR", &commandOverride);
 
       break;
   }

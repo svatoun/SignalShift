@@ -32,7 +32,7 @@ const byte ACK_BUSY_PIN = 10;
 // ShiftPWM HW setup setup
 const byte ShiftPWM_dataPin = 11;
 const byte ShiftPWM_clockPin = 13;
-const byte ShiftPWM_latchPin = 8;
+const byte ShiftPWM_latchPin = 10;
 
 // min/max brightness for PWM. PWM is in range 0-255.
 unsigned char maxBrightness = 255;
@@ -258,6 +258,7 @@ unsigned int lightStartTimeBubl[NUM_OUTPUTS] = {  };
 byte signalMastLastCode[NUM_SIGNAL_MAST]    = { 255, 255, 255, 255, 255, 255, 255, 255 };   // last code
 unsigned long signalMastLastTime[NUM_SIGNAL_MAST]    = { };   // last time
 boolean signalMastCodeChanged[NUM_SIGNAL_MAST]    = { true, true, true, true, true, true, true, true };   // code changed
+byte overrides[NUM_OUTPUTS] = { false };
 
 int counterNrOutput = 0 ;
 int counterNrSignalMast = 0 ;
@@ -627,6 +628,21 @@ void changeLightState2(byte lightOutput, struct LightFunction newState) {
   }
 }
 
+/**
+ * The 74HC595 on the PCB is placed so that its outputs are mirrored: MSB is at the edge, while LSB is in the middle of the
+ * pin line. We need to reverse output position within each 8-bit sequence
+ */
+inline byte numberToPhysOutput(byte nrOutput) {
+  return (nrOutput & (~0x07)) + (7 - (nrOutput & 0x07));
+}
+
+void setPWM(byte nrOutput, byte level) {
+  if (overrides[nrOutput]) {
+    return;
+  }
+  ShiftPWM.SetOne(numberToPhysOutput(nrOutput), level);
+}
+
 void processBulbBlinking(byte nrOutput, int blinkDelay) {
   boolean off = bublState2[nrOutput].off;
   int elapsed = timeElapsedForBulb(nrOutput);
@@ -640,7 +656,7 @@ void processBulbBlinking(byte nrOutput, int blinkDelay) {
         Serial.print("Light elapsed "); Serial.print(nrOutput); Serial.print(F( " off = ")); Serial.println(off);
       }
       bublState2[nrOutput].end = true;
-      ShiftPWM.SetOne(nrOutput, off ? minBrightness : maxBrightness);
+      setPWM(nrOutput, off ? minBrightness : maxBrightness);
     }
 
     if (blinkDelay > 0) {
@@ -1044,14 +1060,14 @@ void processFadeOnOrOff(byte nrOutput, boolean fadeOn) {
     if (debugFadeOnOff) {
       Serial.println("Reached limit");
     }
-    ShiftPWM.SetOne(nrOutput, fadeOn ? maxBrightness : minBrightness);
+    setPWM(nrOutput, fadeOn ? maxBrightness : minBrightness);
     return;
   }
   for (idx = 0; idx < limit && elapsed > fadeTimeLight[idx]; idx++) ;
   // idx will be one higher than last less elapsed time, so if elapsed > fadeTimeLight[idx], then becomes 2.
   if (idx >= limit) {
     // should never happen, but prevents out-of-range access
-    ShiftPWM.SetOne(nrOutput, fadeOn ? maxBrightness : minBrightness);
+    setPWM(nrOutput, fadeOn ? maxBrightness : minBrightness);
     return;
   }
   
@@ -1068,7 +1084,7 @@ void processFadeOnOrOff(byte nrOutput, boolean fadeOn) {
     Serial.print(", pwm = "); Serial.print(pwm);
     Serial.print(", time="); Serial.println(elapsed);
   }
-  ShiftPWM.SetOne(nrOutput, pwm);
+  setPWM(nrOutput, pwm);
 }
 
 void processFadeOn(byte nrOutput) {
@@ -1082,7 +1098,7 @@ void processFadeOn(byte nrOutput) {
   int span = (maxBrightness - minBrightness);
   int pwm = idx >= limit ? maxBrightness : ((span * FADE_COUNTER_LIGHT_1[idx]) / FADE_COUNTER_LIGHT_2[idx]) + minBrightness;
 
-  ShiftPWM.SetOne(nrOutput, pwm);
+  setPWM(nrOutput, pwm);
 
   if (debugFadeOnOff) {
     Serial.print("Fade ON, output="); Serial.print(nrOutput); Serial.print("idx="); Serial.print(idx); Serial.print(", counters: "); 
@@ -1106,7 +1122,7 @@ void processFadeOff(byte nrOutput) {
   int span = (maxBrightness - minBrightness);
   int pwm = idx >= limit ? minBrightness : maxBrightness - ((span * FADE_COUNTER_LIGHT_1[idx]) / FADE_COUNTER_LIGHT_2[idx]);
 
-  ShiftPWM.SetOne(nrOutput, pwm);
+  setPWM(nrOutput, pwm);
 
   if (debugFadeOnOff) {
     Serial.print("Fade OFF, output="); Serial.print(nrOutput); Serial.print("idx="); Serial.print(", counters: "); 
