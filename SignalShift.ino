@@ -13,6 +13,8 @@
  *  RELICENSED to Apache Public License 2.0 with the permission of the Original Author / Copyright holder.
  */
 
+ 
+
 #include "Arduino.h"
 #include <NmraDcc.h>
 
@@ -258,7 +260,8 @@ unsigned int lightStartTimeBubl[NUM_OUTPUTS] = {  };
 byte signalMastLastCode[NUM_SIGNAL_MAST]    = { 255, 255, 255, 255, 255, 255, 255, 255 };   // last code
 unsigned long signalMastLastTime[NUM_SIGNAL_MAST]    = { };   // last time
 boolean signalMastCodeChanged[NUM_SIGNAL_MAST]    = { true, true, true, true, true, true, true, true };   // code changed
-byte overrides[NUM_OUTPUTS] = { false };
+byte overrides[(NUM_OUTPUTS + 7) / 8] = { false };
+byte signalStates[NUM_OUTPUTS] = { 0 };
 
 int counterNrOutput = 0 ;
 int counterNrSignalMast = 0 ;
@@ -320,10 +323,10 @@ void setupShiftPWM() {
 
   pinMode(2, INPUT);
 
-  ShiftPWM.SetAmountOfRegisters(8);
+  ShiftPWM.SetAmountOfRegisters(NUM_8BIT_SHIFT_REGISTERS);
   ShiftPWM.SetPinGrouping(1); //This is the default, but I added here to demonstrate how to use the funtion
   ShiftPWM.Start(pwmFrequency,maxBrightness);
-  ShiftPWM.SetAll(0);
+  ShiftPWM.SetAll(maxBrightness);
 }
 
 
@@ -637,7 +640,8 @@ inline byte numberToPhysOutput(byte nrOutput) {
 }
 
 void setPWM(byte nrOutput, byte level) {
-  if (overrides[nrOutput]) {
+  boolean b = bitRead(overrides[nrOutput / 8], nrOutput & 0x07);
+  if (b) {
     return;
   }
   ShiftPWM.SetOne(numberToPhysOutput(nrOutput), level);
@@ -1146,7 +1150,7 @@ void notifyCVAck() {
  * CV was changed.
  */
 void notifyCVChange(uint16_t CV, uint8_t Value) {
-
+  Serial.print(F("CV changed: ")); Serial.print(CV); Serial.print(F(" := ")); Serial.println(Value);
   if (CV == CV_ACCESSORY_DECODER_ADDRESS_LSB) {
     lsb = Value;
     thisDecoderAddress = (msb << 8) | lsb;

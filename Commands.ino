@@ -537,13 +537,17 @@ void commandOverride() {
   }
   for (int i = n - 1; i < to; i++) {
     if (level < 0) {
-      overrides[i] = false;
+      bitWrite(overrides[i / 8], i & 0x07, false);
       ShiftPWM.SetOne(numberToPhysOutput(i), 0);
     } else {
-      overrides[i] = true;
+      bitWrite(overrides[i / 8], i & 0x07, true);
       ShiftPWM.SetOne(numberToPhysOutput(i), level);
     }
   }
+}
+
+void commandInf() {
+
 }
 
 boolean handleSignals(ModuleCmd cmd) {
