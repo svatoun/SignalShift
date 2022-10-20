@@ -36,11 +36,10 @@ void dumpAllMasts() {
 }
 
 boolean isMastActive(int nMast) {
-  int cnt = 0;
   for (int i = 0; i < maxOutputsPerMast; i++) {
     const oneLightOutputs& outConfig = *(lightConfiguration[i]);
     int o = outConfig[nMast];
-    if ((o != ONA) && (o > -1)) {
+    if ((o != ONA) && (o != 0xff)) {
       return true;
     }
   }
@@ -53,7 +52,7 @@ void printMastDef(int nMast) {
   for (int i = 0; i < maxOutputsPerMast; i++) {
     const oneLightOutputs& outConfig = *(lightConfiguration[i]);
     int o = outConfig[nMast];
-    if ((o != ONA) && (o > -1)) {
+    if ((o != ONA) && (o != 0xff)) {
       if (o < first) {
         first = o;
       }
@@ -237,6 +236,9 @@ void commandEnd() {
   }
 }
 
+/*
+  Syntax: DEF:mast:first-out:lights:codes
+*/
 void commandDefineMast() {
   int nMast = nextNumber();
   if (nMast < 1 || nMast > NUM_SIGNAL_MAST) {
@@ -331,7 +333,7 @@ void commandSetSignal() {
 
 void commandGetCV() {
   int cv = nextNumber();
-  if (cv < 1 || cv > 512) {
+  if (cv < 1 || cv > 1023) {
     Serial.println(F("Invalid CV number"));
     return;
   }
