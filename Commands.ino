@@ -350,9 +350,16 @@ void commandSetCV() {
   int val = nextNumber();
   if (val < 0 || val > 255) {
     Serial.println(F("Invalid CV value"));
+    return;
   }
   int oldV = Dcc.getCV(cv);
+  int x = nextNumber();
+  
   Dcc.setCV(cv, val);
+  if (x > 0) {
+    Serial.println(F("Notify CV change"));
+    notifyDccCVChange(cv, val);
+  }
   Serial.print(F("Changed CV #")); Serial.print(cv); Serial.print(F(": ")); Serial.print(oldV); Serial.print(F(" => ")); Serial.println(val);
 }
 

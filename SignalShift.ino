@@ -15,6 +15,7 @@
 
 #include "Arduino.h"
 #include <NmraDcc.h>
+#include <EEPROM.h>
 
 #include "Common.h"
 
@@ -94,18 +95,21 @@ static_assert(CV_NUM_MAST_TYPE_END < CV_NUM_MAST_PIN_START, "Too many masts, CV 
 const uint16_t START_CV_OUTPUT = 128;
 const uint16_t END_CV_OUTPUT = START_CV_OUTPUT + (SEGMENT_SIZE * NUM_SIGNAL_MAST - 1);
 
+const uint16_t START_CV_OUTPUT_BASE = 352;
+const uint16_t END_CV_OUTPUT_BASE = START_CV_OUTPUT_BASE + NUM_SIGNAL_MAST - 1;
+
 const uint16_t START_CV_ASPECT_TABLE = 512;
-static_assert(END_CV_OUTPUT <= START_CV_ASPECT_TABLE, "Too many outputs per masts, CV overlap");
+static_assert(END_CV_OUTPUT < START_CV_ASPECT_TABLE, "Too many outputs per masts, CV overlap");
 static_assert(START_CV_ASPECT_TABLE + NUM_SIGNAL_MAST * maxAspects <= 1024, "Too many mast aspects, out of memory");
 
 /* ------------- Default values for supported CVs ---------- */
 
-const uint8_t VALUE_AUXILIARY_ACTIVATION = 3;  // change this value to restore CV defaults after upload sketch
+const uint8_t VALUE_AUXILIARY_ACTIVATION = 4;  // change this value to restore CV defaults after upload sketch
 const uint8_t VALUE_DECODER_KEY = 0;           // unlocked decoder
 const uint8_t VALUE_DECODER_LOCK = 0;          // unlocked decoder
 
 const uint8_t VALUE_ROCO_ADDRESS = 1;       // 1 - ROCO address, 0 - LENZ address
-const uint8_t VALUE_FADE_RATE = 2;          // 0 - 7
+const uint8_t VALUE_FADE_RATE = 5;          // 0 - 7
 const uint8_t VALUE_NUM_SIGNAL_NUMBER = 8;  // 1 - NUM_SIGNAL_MAST
 const uint8_t VALUE_ASPECT_LAG = 1;         // 0 - 255   LAG × 0,128 s
 
@@ -119,7 +123,7 @@ const int NUM_8BIT_SHIFT_REGISTERS = (NUM_OUTPUTS + 7) / 8;
 const int maxAspectBits = 5;
 static_assert(maxAspects <= (1 << maxAspectBits), "Too many aspects, do not fit in 5 bits");
 
-const byte ONA = NUM_OUTPUTS;  // OUTPUT_NOT_ASSIGNED
+const byte ONA = NUM_OUTPUTS + 1;  // OUTPUT_NOT_ASSIGNED
 
 const uint8_t INIT_DECODER_ADDRESS = 100;  // ACCESSORY DECODER ADDRESS default
 uint16_t thisDecoderAddress = 100;         // ACCESSORY DECODER ADDRESS
@@ -135,11 +139,12 @@ int posNumber[40];
 
 // Signal sets defined in the decoder
 enum SignalSet : byte {
-  SIGNAL_SET_CSD_BASIC = 0,         // ČSD basic signal set
-  SIGNAL_SET_CSD_INTERMEDIATE = 1,  // ČSD intermediate signal set
-  SIGNAL_SET_CSD_EMBEDDED = 2,      // ČSD embedded signal set
-  SIGNAL_SET_SZDC_BASIC = 3,        // SŽDC basic signal set
-  SIGNAL_SET_CSD_MECHANICAL = 4,    // ČSD mechanical signal set
+  DisabledSignalSet = 0,
+  SIGNAL_SET_CSD_BASIC = 1,         // ČSD basic signal set
+  SIGNAL_SET_CSD_INTERMEDIATE = 2,  // ČSD intermediate signal set
+  SIGNAL_SET_CSD_EMBEDDED = 3,      // ČSD embedded signal set
+  SIGNAL_SET_SZDC_BASIC = 4,        // SŽDC basic signal set
+  SIGNAL_SET_CSD_MECHANICAL = 5,    // ČSD mechanical signal set
 
   _signal_set_last  // must be last
 };
@@ -352,7 +357,7 @@ void setup() {
 
   setupShiftPWM();
   // Setup which External Interrupt, the Pin it's associated with that we're using and enable the Pull-Up
-  Dcc.pin(0, 2, 1);
+  Dcc.pin(digitalPinToInterrupt(2), 2, 1);
 
   // Call the main DCC Init function to enable the DCC Receiver
   Dcc.initAccessoryDecoder(MAN_ID_DIY, SW_VERSION, FLAGS_OUTPUT_ADDRESS_MODE, 0);
@@ -421,6 +426,7 @@ void notifyDccAccTurnoutOutput(uint16_t Addr, uint8_t Direction, uint8_t OutputP
   if (rocoAddress) {
     Addr = Addr + 4;
   }
+  Serial.print("Turnout");
 
 
   if ((Addr < thisDecoderAddress)
@@ -467,24 +473,12 @@ struct MastSettings {
 };
 
 const MastSettings factorySignalMastOutputs[] PROGMEM = {
-  { { 0, 1, 2, 3, 4, ONA, ONA, ONA, ONA, ONA }, 0x80, 0, 5 },    // signal mast 0
-  { { 5, 6, 7, 8, 9, ONA, ONA, ONA, ONA, ONA }, 0x80, 0, 5 },    // signal mast 1
-  { { 10, 11, 12, 13, 14, ONA, ONA, ONA, ONA, ONA }, 0x80, 0, 5 },    // signal mast 2
-  { { 15, 16, 17, 18, 19, ONA, ONA, ONA, ONA, ONA }, 0x80, 0, 5 },    // signal mast 3
-  { { 20, 21, 22, 23, 24, ONA, ONA, ONA, ONA, ONA }, 0x80, 0, 5 },    // signal mast 4
-  { { 25, 26, 27, 28, 29, ONA, ONA, ONA, ONA, ONA }, 0x80, 0, 5 },    // signal mast 5
-  { { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA }, 0, 0, 5 },    // signal mast 6
-  { { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA }, 0, 0, 5 },    // signal mast 7
-  /*
-  0, 1, 2, 3, 4, ONA, ONA, ONA, ONA, ONA, 0, 0, 5,            // signal mast 0
-  5, 6, 7, 8, 9, ONA, ONA, ONA, ONA, ONA, 0, 0, 5,            // signal mast 1
-  10, 11, 12, 13, 14, ONA, ONA, ONA, ONA, ONA, 0, 0, 5,       // signal mast 2
-  15, 16, 17, 18, 19, ONA, ONA, ONA, ONA, ONA, 0, 0, 5,       // signal mast 3
-  20, 21, 22, 23, 24, ONA, ONA, ONA, ONA, ONA, 0, 0, 5,       // signal mast 4
-  25, 26, 27, 28, 29, ONA, ONA, ONA, ONA, ONA, 0, 0, 5,       // signal mast 5
-  ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0, 0, 5,  // signal mast 6
-  ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA, 0, 0, 5   // signal mast 7
-  */
+  { { 1, 2, 3, 4, 5 }, 0x80, 0, 5 },    // signal mast 0
+  { { 6, 7, 8, 9, 10 }, 0x80, 0, 5 },    // signal mast 1
+  { { 11, 12, 13, 14, 15 }, 0x80, 0, 5 },    // signal mast 2
+  { { 16, 17, 18, 19, 20 }, 0x80, 0, 5 },    // signal mast 3
+  { { 21, 22, 23, 24, 25 }, 0x80, 0, 5 },    // signal mast 4
+  { { 26, 27, 28, 29, 30 }, 0x80, 0, 5 },    // signal mast 5
 };
 
 const uint8_t noSignalMastOutputs[] PROGMEM = {
@@ -535,39 +529,61 @@ void setFactoryDefault() {
     
     byte signalSetOrMastType = pgm_read_byte_near(pgmIndex);
     if ((signalSetOrMastType & usesCodes) > 0) {
-      Serial.print(F("Using template for mast ")); Serial.println(mast);
-
-      const struct MastTypeDefinition& def = copySignalMastTypeDefinition(toTemplateIndex(signalSetOrMastType));
-      int codeCount = def.codeCount;
-      int lightCount = def.lightCount;
-
-      printByteBuffer((byte*)&def, sizeof(def)); Serial.println();
-      saveTemplateOutputsToCVs(def, mast);
-
-      pgmIndex = (int)(&settingsDef.defaultCodeOrAspect);
-      byte val = pgm_read_byte_near(pgmIndex);
-      int cv = cvBase + ((int)(&settingsDef.defaultCodeOrAspect)) - ((int)(&settingsDef));
-      if (val != 0xff) {
-        val = def.defaultCode;
-        Serial.print(F("Setting cv default code ")); Serial.print(cv); Serial.print(" to "); Serial.println(val);
-        Dcc.setCV(cv, val);
-      }
-      pgmIndex++; cv++;
-      val = pgm_read_byte_near(pgmIndex);
-      if (val == 0 || val > 16) {
-        val = findRequiredAddrCount(codeCount, signalSetOrMastType);
-      }
-      Serial.print(F("Setting cv addresses ")); Serial.print(cv); Serial.print(" to "); Serial.println(val);
-      Dcc.setCV(cv, val);
-
-      cv = START_CV_ASPECT_TABLE + mast * maxAspects;
-      for (int i = 0; i < sizeof(def.code2Aspect); i++) {
-        Dcc.setCV(cv, def.code2Aspect[i]);
-        cv++;
-      }
+      doChangeMastType(mast, signalSetOrMastType, false);
     }
   }
   initLocalVariables();
+}
+
+void doChangeMastType(int mast, int signalSetOrMastType, boolean stable) {
+  Serial.print(F("Using template for mast ")); Serial.println(mast);
+
+  const MastSettings& settingsDef = ((MastSettings*)factorySignalMastOutputs)[mast];
+  int cvBase = (sizeof(MastSettings) * mast) + START_CV_OUTPUT;
+  const struct MastTypeDefinition& def = copySignalMastTypeDefinition(toTemplateIndex(signalSetOrMastType));
+  int codeCount = def.codeCount;
+  int lightCount = def.lightCount;
+
+  printByteBuffer((byte*)&def, sizeof(def)); Serial.println();
+  saveTemplateOutputsToCVs(def, mast, stable);
+
+  int pgmIndex = (int)(&settingsDef.defaultCodeOrAspect);
+  byte val = pgm_read_byte_near(pgmIndex);
+  int cv = cvBase + ((int)(&settingsDef.defaultCodeOrAspect)) - ((int)(&settingsDef));
+  if (val != 0xff) {
+    val = def.defaultCode;
+    Serial.print(F("Setting cv default code ")); Serial.print(cv); Serial.print(" to "); Serial.println(val);
+    Dcc.setCV(cv, val);
+  }
+  pgmIndex++; cv++;
+  val = pgm_read_byte_near(pgmIndex);
+  if (val == 0 || val > 16) {
+    val = findRequiredAddrCount(codeCount, signalSetOrMastType);
+  }
+  Serial.print(F("Setting cv addresses ")); Serial.print(cv); Serial.print(" to "); Serial.println(val);
+  Dcc.setCV(cv, val);
+
+  cv = START_CV_ASPECT_TABLE + mast * maxAspects;
+  for (int i = 0; i < sizeof(def.code2Aspect); i++) {
+    Dcc.setCV(cv, def.code2Aspect[i]);
+    cv++;
+  }
+}
+
+void changeMastType(int mastIndex, int newType) {
+  if (newType == 0) {
+    int cv = START_CV_OUTPUT + (mastIndex * SEGMENT_SIZE);
+    for (int i = 0; i < maxOutputsPerMast; i++) {
+      Dcc.setCV(cv + i, 0);
+    }
+    // number of addresses.
+    Dcc.setCV(cv + SEGMENT_SIZE - 1, 0);
+    return;
+  }
+  if ((newType & usesCodes) == 0) {
+    return;
+  }
+  doChangeMastType(mastIndex, newType, true);
 }
 
 void printByteBuffer(const byte* buf, int size) {
@@ -606,7 +622,7 @@ int findRequiredAddrCount(int codes, int mastType) {
 }
 
 int findMinLightIndex(int mast) {
-  int cvStart = START_CV_OUTPUT + mast * maxOutputsPerMast;
+  int cvStart = START_CV_OUTPUT + mast * SEGMENT_SIZE;
   int min = 255;
   for (int i = cvStart; i < cvStart + maxOutputsPerMast; i++) {
     int x = Dcc.getCV(i);
@@ -622,7 +638,7 @@ int findMinLightIndex(int mast) {
 
 int findLightCount(int mast) {
   int cnt = 0; 
-  int cvStart = START_CV_OUTPUT + mast * maxOutputsPerMast;
+  int cvStart = START_CV_OUTPUT + mast * SEGMENT_SIZE;
   for (int i = cvStart; i < cvStart + maxOutputsPerMast; i++) {
     int x = Dcc.getCV(i);
     if (x == ONA || x == 255) {
@@ -635,11 +651,26 @@ int findLightCount(int mast) {
 
 int findNextLight(int mast) {
   if (mast == 0) {
-    return 0;
+    return 1;
   }
 
-  int cvStart = START_CV_OUTPUT + (mast - 1) * maxOutputsPerMast;
+  int cvStart;
+  int prevMast = mast - 1;
+  byte type;
+  do {
+    cvStart = START_CV_OUTPUT + prevMast * SEGMENT_SIZE;
+    Serial.print(F("cvStart ")); Serial.println(cvStart);
+    type = Dcc.getCV(cvStart + maxOutputsPerMast);    
+    if (type > 0) {
+      break;
+    }
+    prevMast--;
+  } while (prevMast >= 0);
+  if (prevMast < 0) {
+    return 1;
+  }
   int max = -1;
+  Serial.print(F("Searching from ")); Serial.println(cvStart);
   for (int i = cvStart; i < cvStart + maxOutputsPerMast; i++) {
     int x = Dcc.getCV(i);
     if (x == ONA || x == 255) {
@@ -649,20 +680,24 @@ int findNextLight(int mast) {
       max = x;
     }
   }
-  return max + 1;
+  return max < 0 ? -1 : max + 1;
 }
 
-void saveTemplateOutputsToCVs(const struct MastTypeDefinition& def, int mastIndex) {
+void saveTemplateOutputsToCVs(const struct MastTypeDefinition& def, int mastIndex, boolean stable) {
   Serial.print(F("Setting outputs to mast #")); Serial.print(mastIndex); Serial.print(F(" from def ")); Serial.println((int)(int*)(&def), HEX);
   int minLightNumber = findMinLightIndex(mastIndex);
   int oldLightCount = findLightCount(mastIndex);
   int from = findNextLight(mastIndex);
 
+  if (stable && (minLightNumber >= 0)) {
+    from = minLightNumber;
+  }
+
   int lc = 0;
   int cvIndex = (sizeof(MastSettings) * mastIndex) + START_CV_OUTPUT;
   for (int i = 0; i < sizeof(def.outputs); i++) {
     byte n = def.outputs[i];
-    if (n != 0 && n != 255) {
+    if (n != 0 && n <= NUM_OUTPUTS) {
       n += from;
       n--;
       lc++;
@@ -684,11 +719,11 @@ int reassignMastOutputs(int mastIndex, int from, boolean propagate) {
 
   int lastOutput = -1;
 
-  Serial.print(F("Setting outputs for ")); Serial.print(mastIndex); Serial.print(F(" start from ")); Serial.println(from);
+  Serial.print(F("Reassigning outputs for ")); Serial.print(mastIndex); Serial.print(F(" start from ")); Serial.println(from);
 
   for (int i = 0; i < sizeof(MastSettings::outputs); i++) {
     byte n = Dcc.getCV(cvIndex);
-    if (n != 255 && n != ONA) {
+    if (n > 0 && n <= NUM_OUTPUTS) {
       n = (n - minLightNumber) + from;
       Dcc.setCV(cvIndex, n);
       lastOutput = n;
@@ -701,6 +736,11 @@ int reassignMastOutputs(int mastIndex, int from, boolean propagate) {
   }
   int nextInput = lastOutput;
   for (int nextMast = mastIndex + 1; nextMast = NUM_SIGNAL_MAST; nextMast++) {
+    int cvStart = START_CV_OUTPUT + nextMast * SEGMENT_SIZE;
+    byte type = Dcc.getCV(cvStart + maxOutputsPerMast);
+    if (type == 0) {
+      continue;
+    }
     int min = findMinLightIndex(nextMast);
     if (min >= nextInput) {
       return -1;
@@ -721,6 +761,7 @@ void initLocalVariables() {
 }
 
 void maybeInitLocalVariables() {
+  return;
   if (!reinitializeLocalVariables) {
     return;
   }
@@ -751,33 +792,43 @@ void initializeFadeTime() {
   }
 }
 
+uint8_t recordOutput(byte* bitmap, uint8_t output) {
+  if (output >= NUM_OUTPUTS) {
+    return 0;
+  }
+  uint8_t o = output - 1;
+  bitSet(bitmap[o / 8], o % 8);
+  return output;
+}
+
 /**********************************************************************************
  * Init local variables for signal mast.
  */
 void initLocalVariablesSignalMast() {
 
   int counter = START_CV_OUTPUT;
+  byte usedOutputs[(NUM_OUTPUTS + 7) / 8];
 
   for (int i = 0; i < NUM_SIGNAL_MAST; i++) {
-    signalMastLightYellowUpperOutput[i] = Dcc.getCV(counter);  // yellow upper
+    signalMastLightYellowUpperOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // yellow upper
     counter++;
-    signalMastLightGreenOutput[i] = Dcc.getCV(counter);  // green
+    signalMastLightGreenOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // green
     counter++;
-    signalMastLightRedOutput[i] = Dcc.getCV(counter);  // red
+    signalMastLightRedOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // red
     counter++;
-    signalMastLightLunarOutput[i] = Dcc.getCV(counter);  // lunar
+    signalMastLightLunarOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // lunar
     counter++;
-    signalMastLightYellowLowerOutput[i] = Dcc.getCV(counter);  // yellow lower
+    signalMastLightYellowLowerOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // yellow lower
     counter++;
-    signalMastLightBlueOutput[i] = Dcc.getCV(counter);  // blue
+    signalMastLightBlueOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // blue
     counter++;
-    signalMastLightGreenStripOutput[i] = Dcc.getCV(counter);  // green strip
+    signalMastLightGreenStripOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // green strip
     counter++;
-    signalMastLightYellowStripOutput[i] = Dcc.getCV(counter);  // yellow strip
+    signalMastLightYellowStripOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // yellow strip
     counter++;
-    signalMastLightLunarLowerOutput[i] = Dcc.getCV(counter);  // lunar lower
+    signalMastLightLunarLowerOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // lunar lower
     counter++;
-    signalMastLightBackwardOutput[i] = Dcc.getCV(counter);  // backward
+    signalMastLightBackwardOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // backward
     counter++;
 
     byte mastTypeOrSignalSet = Dcc.getCV(counter);
@@ -799,8 +850,14 @@ void initLocalVariablesSignalMast() {
 
     signalMastDefaultAspectIdx[i] = defaultAspectIdx;
     signalMastNumberAddress[i] = Dcc.getCV(counter);
-    Serial.print(F("Addresses: ")); Serial.println(signalMastNumberAddress[i]);
     counter++;
+
+    for (int i = 0; i < NUM_OUTPUTS; i++) {
+      boolean used = bitRead(usedOutputs[i / 8], i % 8);
+      if (!used) {
+        ShiftPWM.SetOne(numberToPhysOutput(i), 0);
+      }
+    }
   }
 
   maxDecoderAddress = thisDecoderAddress;
@@ -885,9 +942,10 @@ void processOutputLight(byte nrOutput) {
 }
 
 void changeLightState2(byte lightOutput, struct LightFunction newState) {
-  if (lightOutput >= NUM_OUTPUTS) {
+  if (lightOutput == 0 || lightOutput > NUM_OUTPUTS) {
     return;
   }
+  lightOutput--;
   LightFunction& bs = bublState2[lightOutput];
   if (debugLights) {
     Serial.print(F("Change light #"));
@@ -942,6 +1000,9 @@ void setPWM(byte nrOutput, byte level) {
 }
 
 void processBulbBlinking(byte nrOutput, int blinkDelay) {
+  if (nrOutput >= NUM_OUTPUTS) {
+    return;
+  }
   boolean off = bublState2[nrOutput].off;
   int elapsed = timeElapsedForBulb(nrOutput);
   if (elapsed > 0xff00) {
@@ -1281,6 +1342,13 @@ void notifyCVChange(uint16_t CV, uint8_t Value) {
   Serial.print(CV);
   Serial.print(F(" := "));
   Serial.println(Value);
+}
+
+void notifyDccCVChange(uint16_t CV, uint8_t Value) {
+  Serial.print(F("DCC CV changed: "));
+  Serial.print(CV);
+  Serial.print(F(" := "));
+  Serial.println(Value);
   if (CV == CV_ACCESSORY_DECODER_ADDRESS_LSB) {
     lsb = Value;
     thisDecoderAddress = (msb << 8) | lsb;
@@ -1341,8 +1409,25 @@ void notifyCVChange(uint16_t CV, uint8_t Value) {
   }
 
   if (CV >= START_CV_OUTPUT && CV <= END_CV_OUTPUT) {
+    int diff = CV - START_CV_OUTPUT;
+    Serial.print(diff);
+    if ((diff % SEGMENT_SIZE) == maxOutputsPerMast) {
+      changeMastType(diff / SEGMENT_SIZE, Value);
+    }
     initLocalVariablesSignalMast();
     return;
+  }
+  if (CV >= START_CV_OUTPUT_BASE && CV <= END_CV_OUTPUT_BASE) {
+    int mast = CV - START_CV_OUTPUT_BASE;
+    boolean shift;
+    if (Value > 100) {
+      Value -= 100;
+      shift = true;
+    } else {
+      shift = false;
+    }
+    reassignMastOutputs(mast, Value, shift);
+    initLocalVariablesSignalMast();
   }
 }
 
@@ -1440,4 +1525,8 @@ byte findMastTypeSignalSet(byte typeId) {
     signalSet = 0;
   }
   return signalSet;
+}
+
+uint8_t notifyCVRead(unsigned int cv) {
+  return EEPROM.read(cv);
 }
