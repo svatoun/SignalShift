@@ -5,11 +5,14 @@ boolean handleSignals(ModuleCmd cmd);
 ModuleChain signals("signals", 0, &handleSignals);
 
 extern void commandReset();
+extern byte mastTypeNameCount; 
+extern const MastTypeNameId mastTypeNames[];
 
 int definedMast = -1;
 
 void commandClear() {
   setFactoryDefault();
+  commandSave();
   commandReset();
 }
 
@@ -39,7 +42,7 @@ boolean isMastActive(int nMast) {
   for (int i = 0; i < maxOutputsPerMast; i++) {
     const oneLightOutputs& outConfig = *(lightConfiguration[i]);
     int o = outConfig[nMast];
-    if ((o != ONA) && (o != 0xff)) {
+    if ((o != ONA) && (o < NUM_OUTPUTS + 1)) {
       return true;
     }
   }
@@ -47,30 +50,68 @@ boolean isMastActive(int nMast) {
 }
 
 void printMastDef(int nMast) {
-  int first = ONA;
+  int first = 0xff;
   int cnt = 0;
   for (int i = 0; i < maxOutputsPerMast; i++) {
     const oneLightOutputs& outConfig = *(lightConfiguration[i]);
     int o = outConfig[nMast];
-    if ((o != ONA) && (o != 0xff)) {
+    if ((o != ONA) && (o < NUM_OUTPUTS + 1)) {
+      // Serial.print("output "); Serial.print(i); Serial.print(" = "); Serial.println(o);
       if (o < first) {
         first = o;
       }
       cnt++;
     }
   }
-  if (first >= ONA) {
+  if (first == ONA || first > NUM_OUTPUTS) {
     Serial.print(F("DEL:")); Serial.println(nMast + 1);
     return;
   }
   Serial.print(F("DEF:")); Serial.print(nMast + 1); Serial.print(':'); 
-  Serial.print(first + 1); Serial.print(':'); Serial.print(cnt); Serial.print(':'); Serial.println(1 << signalMastNumberAddress[nMast]);
-  if (signalMastSignalSet[nMast] != 0 || signalMastDefaultAspectIdx[nMast] != 0) {
-    Serial.print(F("  SET:")); Serial.print(signalMastSignalSet[nMast]); Serial.print(':'); Serial.println(signalMastDefaultAspectIdx[nMast]);
+  Serial.print(first); Serial.print(':'); Serial.print(cnt); Serial.print(':'); 
+
+  int cvBase = START_CV_OUTPUT + nMast * SEGMENT_SIZE;
+  int mode = Dcc.getCV(cvBase + 10);
+  switch (mode & signalSetControlType) {
+    case bitwiseControl:
+      Serial.print('b');
+      break;
+    case turnoutNoDirection:
+      Serial.print('t');
+      break;
+    case extendedPacket:
+      Serial.print('e');
+      break;
+    case turnoutControl:
+      Serial.print('c');
+      break;
+    default:
+      Serial.print("ERR/"); Serial.print(mode, HEX); Serial.print("/"); Serial.print(mode & signalSetControlType, HEX);
+      break;  
   }
+  Serial.print(':');
+  boolean codes = false;
+  if (usesCodes & mode) {
+    int type = mode & signalSetType;
+    if (type < mastTypeNameCount) {
+      codes = true;
+      char buffer[10];      
+      int idx = (int)&(mastTypeNames[type]);
+      strcpy_P(buffer, (char*)pgm_read_word_near(idx + 1)); 
+      Serial.print('+'); Serial.println(buffer);
+    }
+  }
+  if (!codes) {
+    Serial.println(signalMastNumberSigns[nMast]);
+  }
+  if (signalMastSignalSet[nMast] != 1 || signalMastDefaultAspectIdx[nMast] != 0) {
+    Serial.print(F("  MSS:")); Serial.print(signalMastSignalSet[nMast]); Serial.print(':'); Serial.println(signalMastDefaultAspectIdx[nMast]);
+  }
+  /*
   Serial.print(F("  OUT:"));
   printMastOutputs(nMast, false);
   printAspectMap(nMast);
+  */
   Serial.println(F("END"));
 }
 
@@ -80,7 +121,7 @@ void printMastOutputs(int nMast, boolean suppressFull) {
   for (int i = 0; i < maxOutputsPerMast; i++) {
     const oneLightOutputs& outConfig = *(lightConfiguration[i]);
     lights[i] = outConfig[nMast];
-    if (lights[i] < ONA) {
+    if (lights[i] != ONA && lights[i] <= NUM_OUTPUTS) {
       cnt++;
     }
   }
@@ -237,7 +278,8 @@ void commandEnd() {
 }
 
 /*
-  Syntax: DEF:mast:first-out:lights:codes
+  Syntax: DEF:mast:first-out:mode:lights:codes
+          DEF:mast:first-out:mode:+name
 */
 void commandDefineMast() {
   int nMast = nextNumber();
@@ -257,57 +299,127 @@ void commandDefineMast() {
     return;
   }
 
-  int numLights = nextNumber();
-  if (numLights < 1 || (firstOut + numLights > NUM_OUTPUTS) || numLights > maxOutputsPerMast) {
-    Serial.println(F("Invalid number of lights"));
-    return;
+  byte mastType = 0;
+
+  int mode = -1;
+  switch (*inputPos) {
+    case 'b': case 'B':
+      // bitwise
+      mode = bitwiseControl;
+      break;
+    case 't': case 'T':
+      // turnout
+      mode = turnoutNoDirection;
+      break;
+    case 'e': case 'E':
+      // extended
+      mode = extendedPacket;
+      break;
+    case 'c': case 'C':
+      // turnout control
+      mode = turnoutControl;
+      break;
+  }
+  if (mode != -1) {
+    inputPos++;
+    if (*inputPos == ':') {
+      inputPos++;
+    }
+  } else {
+    mode = bitwiseControl;
   }
 
-  int numSignals = nextNumber();
-  if (numSignals == -2) {
-    numSignals = 1 << numLights;
-  }
-  if (numSignals < 1 || numSignals > 32) {
-    Serial.println(F("Invalid number of signals"));
-    return;
-  }
-  int check = 2;
-  int bits = 1;
-  while (check < numSignals) {
-    check = check << 1;
-    bits++;
-  }
-
-  if (bits > 5) {
-    Serial.println(F("Invalid number of signals"));
-    return;
-  }
-
+  int numSignals = 0;
+  int numLights = 0;
+  int signalSetOrMastType = mode | SIGNAL_SET_CSD_BASIC;
+  int defSignal = 0;
+  int bits = 0;
   int cvBase = START_CV_OUTPUT + (nMast - 1) * SEGMENT_SIZE;
-
-  for (int i = 0; i < maxOutputsPerMast; i++) {
-    if (i >= numLights) {
-      Dcc.setCV(cvBase + i, ONA);
+  
+  if (*inputPos == '+') {
+    const char *s = ++inputPos;
+    char *e = strchr(inputPos, ':');
+    if (e != NULL) {
+      *e = 0;
+      inputPos = e + 1;
     } else {
-      Dcc.setCV(cvBase + i, firstOut + i - 1);
+      e = inputPos + strlen(inputPos);
+      inputPos = e;
+    }
+    // mast type from template
+    char buffer[10];
+    for (int i = 0; i < 32; i++) {
+      int idx = (int)&(mastTypeNames[i]);
+      int id = pgm_read_byte_near(idx);
+      if (id == 0) {
+        break;
+      }
+      id--;
+
+      strcpy_P(buffer, (char*)pgm_read_word_near(idx + 1)); 
+      Serial.print("Comparing id "); Serial.print(id); Serial.print(" - "); Serial.println(buffer);
+
+      if (strcmp(buffer, s) == 0) {
+        mastType = usesCodes | mode | id;
+        Serial.print("Found, mastType"); Serial.println(mastType, HEX);
+        break;
+      }
     }
   }
 
-  // the signal set number
-  Dcc.setCV(cvBase + 10, SIGNAL_SET_CSD_BASIC);
-  // the default signal
-  Dcc.setCV(cvBase + 11, 0);
+  if (mastType == 0) {
+    numLights = nextNumber();
+    if (numLights < 1 || (firstOut + numLights > NUM_OUTPUTS) || numLights > maxOutputsPerMast) {
+      Serial.println(F("Invalid number of lights"));
+      return;
+    }
+
+    numSignals = nextNumber();
+    if (numSignals == -2) {
+      numSignals = 1 << numLights;
+    }
+    
+    if (numSignals < 1 || numSignals > 32) {
+      Serial.println(F("Invalid number of signals"));
+      return;
+    }
+
+    for (int i = 0; i < maxOutputsPerMast; i++) {
+      if (i >= numLights) {
+        Dcc.setCV(cvBase + i, ONA);
+      } else {
+        Dcc.setCV(cvBase + i, firstOut + i - 1);
+      }
+    }
+    // the signal set number
+    Dcc.setCV(cvBase + 10, signalSetOrMastType);
+    // the default signal
+    Dcc.setCV(cvBase + 11, 0);
+    signalMastSignalSet[nMast -1] = SIGNAL_SET_CSD_BASIC;
+  } else {
+    const struct MastTypeDefinition& def = copySignalMastTypeDefinition(toTemplateIndex(signalSetOrMastType));
+    numSignals = def.codeCount;
+    numLights = def.lightCount;
+    defSignal = def.defaultCode;
+    saveTemplateOutputsToCVs(def, (nMast - 1), firstOut);
+  }
+  
+  bits = findRequiredAddrCount(numSignals, mode);
+  if (bits < 1 || bits > 5) {
+    Serial.println(F("Invalid number of signals"));
+    return;
+  }
   // number of addresses = bits
   Serial.print("Wrote to CV #"); Serial.println(cvBase + 12, HEX);
   Dcc.setCV(cvBase + 12, bits);
 
-  signalMastSignalSet[nMast -1] = SIGNAL_SET_CSD_BASIC;
-  signalMastDefaultAspectIdx[nMast - 1] = 0;
+  signalMastNumberSigns[nMast - 1] = numSignals;
+  signalMastDefaultAspectIdx[nMast - 1] = defSignal;
   signalMastNumberAddress[nMast - 1] = bits;
   Serial.print(F("Mast #")); Serial.print(nMast); Serial.print(F(" uses outputs ")); Serial.print(firstOut); Serial.print(F(" - ")); Serial.print(firstOut + numLights);
   Serial.print(F(" and ")); Serial.print(bits); Serial.println(F(" addresses."));
 
-  Serial.print(F("Definition open, END to finish."));
+  Serial.println(F("Definition open, END to finish."));
 }
 
 void commandSetSignal() {
@@ -384,7 +496,7 @@ void commandMastSet() {
   }
   Dcc.setCV(cv + 10, signalSet);
   Dcc.setCV(cv + 11, defaultAspect);
-  signalMastSignalSet[nMast] = signalSet;
+  ((byte&)signalMastSignalSet[nMast]) = (byte)signalSet;
   signalMastDefaultAspectIdx[nMast] = defaultAspect;
 }
 
@@ -401,7 +513,26 @@ void commandMapOutput() {
   nMast--;
   int outCV = START_CV_OUTPUT + (nMast) * SEGMENT_SIZE;
   int cnt = 0;
-  while ((out = nextNumber(true)) != -2) {
+  while (*inputPos) {
+    while (*inputPos == '-') {
+      inputPos++;
+      if (*inputPos == ':' || *inputPos == '-' || *inputPos == 0) {
+        outCV++;
+        cnt++;
+        *inputPos++;
+        continue;
+      } else if (*inputPos != '-') {
+        int n = nextNumber();
+        if (n < 0 || n + cnt > maxOutputsPerMast) {
+          Serial.println(F("Too much skipped"));
+          return;
+        }
+        cnt += n;
+        outCV+= n;
+        continue;
+      }
+    }
+    out = nextNumber(true);
     if (out < 1 || out > NUM_OUTPUTS) {
       Serial.println(F("Invalid output"));
       return;
@@ -559,6 +690,10 @@ void commandInf() {
 
 }
 
+void commandSave() {
+  
+}
+
 boolean handleSignals(ModuleCmd cmd) {
   switch (cmd) {
     case initialize:
@@ -568,7 +703,7 @@ boolean handleSignals(ModuleCmd cmd) {
       registerLineCommand("DEF", &commandDefineMast);
       registerLineCommand("INF", &commandPrintMastDef);
       registerLineCommand("DMP", &commandDump);
-      registerLineCommand("SET", &commandMastSet);
+      registerLineCommand("MSS", &commandMastSet);
       registerLineCommand("OUT", &commandMapOutput);
       registerLineCommand("END", &commandEnd);
       registerLineCommand("MAP", &commandMapAspects);

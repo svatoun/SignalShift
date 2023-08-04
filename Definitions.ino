@@ -87,7 +87,7 @@ const SignalSet32 csdEmbeddedAspects PROGMEM = {
   { LON, L___, L___, L___, L___, STRIP_OFF },                     // Aspect 2: Výstraha,
   { B54, L___, L___, L___, L___, STRIP_OFF },                     // Aspect 3: Očekávej 40
   { STRIP_OFF, STRIP_OFF },                                       // Aspect 4: ----------------------------           *
-  { L___, L___, B22, L___, STRIP_OFF },                           // Aspect 5: Odjezdové návěstidlo dovoluje jízdu    *
+  { L___, L___, L___, B22, L___, STRIP_OFF },                     // Aspect 5: Odjezdové návěstidlo dovoluje jízdu    *
   { L___, LON, L___, L___, L___, LON, L___, L___, L___, L___ },   // Aspect 6: Stůj s modrou                          *
   { LON, L___, L___, L___, LON, STRIP_OFF },                      // Aspect 7: 40 a výstraha
   { STRIP_OFF, STRIP_OFF },                                       // Aspect 8:  ---------------------------           *
@@ -106,7 +106,7 @@ const SignalSet32 csdEmbeddedAspects PROGMEM = {
   { L___, LON, L___, LON, L___, STRIP_OFF },                      // Aspect 21: Opakovaná volno
   { LON, L___, L___, LON, L___, STRIP_OFF },                      // Aspect 22: Opakovaná výstraha
   { B54, L___, L___, LON, L___, STRIP_OFF },                      // Aspect 23: Opakovaná očekávej 40
-  { STRIP_OFF, STRIP_OFF },                                       // Aspect 24: -----------------------               *
+  { L___, L___, L___, B54, L___, L___, L___, L___, B54, L___ },   // Aspect 24: Přísun soupravy vozidel ke spádovišti *
   { STRIP_OFF, STRIP_OFF },                                       // Aspect 25: Posun zakázán opakovaná               *
   { STRIP_OFF, STRIP_OFF },                                       // Aspect 26: Na spádovišti se neposunuje           *
   { L___, L___, L___, L___, L___, LON, L___, L___, L___, L___ },  // Aspect 27: Posun zakázán
@@ -186,7 +186,44 @@ const SignalSet32 csdMechanicalAspects PROGMEM = {
   { STRIP_OFF, STRIP_OFF },                    // Aspect 31: ---------------------------
 };
 
-const MastTypeDefinition mastTypeDefinitions[] PROGMEM = {
+const char TYPE_0_NAME[] PROGMEM = "o4";
+const char TYPE_1_NAME[] PROGMEM = "v5";
+const char TYPE_2_NAME[] PROGMEM = "v4p";
+const char TYPE_3_NAME[] PROGMEM = "v4o";
+const char TYPE_4_NAME[] PROGMEM = "odd";
+const char TYPE_E_NAME[] PROGMEM = "";
+
+const MastTypeNameId mastTypeNames[] PROGMEM = {
+  { 1, TYPE_0_NAME }, 
+  { 2, TYPE_1_NAME }, 
+  { 3, TYPE_2_NAME }, 
+  { 4, TYPE_3_NAME }, 
+  { 5, TYPE_4_NAME },
+
+  { 0, NULL }
+};
+
+byte mastTypeNameCount = sizeof(mastTypeNames) / sizeof(mastTypeNames[0]);
+
+
+const MastTypeDefinition mastTypeDefinitions[32] PROGMEM = {
+  // ---------------- typ 0/128: Hlavní: Odjezdové - ZČBŽ; 8 znaku
+  {
+    8, 4, SIGNAL_SET_CSD_BASIC, 0, 
+    { 0, 1, 2, 3, 4 },
+    {
+      1,    // stuj
+      2,    // volno
+      7,    // 40 a volno (dolni zluta)
+      29,   // posun
+      // --------------------------------
+      32,   // opatrne na privolavaci navest
+      30,   // posun dovolen - nezabezpeceny
+      0,    // test - zhasnuto
+      255,  // test - vse rozsviceno
+    }
+  },
+  // ---------------- typ 1/129: Hlavní: Vjezdové - ŽZČBŽ; 12 znaku
   // Typ #1: 5-svetelne, vjezdove, zluta-zelena-cervena-bila-zluta
   {
     // Pocet kodu (max 32), pocet svetel (max 10), sada aspektu (viz SignalSet), vychozi kod (0.. pocet-kodu - 1).
@@ -209,54 +246,198 @@ const MastTypeDefinition mastTypeDefinitions[] PROGMEM = {
       8,    // 40 a vystraha
       9,    // 40 a ocekavej 40
       32,   // opatrne na privolavaci navest
-      30,   // posun dovolen - bezabezpeceny
+      30,   // posun dovolen - nezabezpeceny
       0,    // test - zhasnuto
       255,  // test - vse rozsviceno
     }
   },
-  // Definice #2: 4-svetelne, odjezdove; zelena-cervena-bila-zluta
+  // ---------------- typ 2/130: Hlavní: Vjezd: Jen přímo - ŽZČB; 8 znaku
   {
     8, 4, SIGNAL_SET_CSD_BASIC, 0, 
-    { 0, 1, 2, 3, 4 },
+    { 1, 2, 3, 4 },
     {
       1,    // stuj
       2,    // volno
-      7,    // 40 a volno (dolni zluta)
+      2,    // 40 a volno (dolni zluta) => volno
       29,   // posun
       // --------------------------------
+      3,    // vystraha
+      4,    // ocekavej 40
       32,   // opatrne na privolavaci navest
-      30,   // posun dovolen - bezabezpeceny
-      0,    // test - zhasnuto
-      255,  // test - vse rozsviceno
+      30,   // posun dovolen - nezabezpeceny
     }
   },
-  // Definice #3: 3-svetelne, odjezdove; cervena-zelena-bila
+  // ---------------- typ 3/131: Hlavní: Vjezd: Jen odbočkou - ŽČBŽ; 8 znaku
   {
-    8, 3, SIGNAL_SET_CSD_BASIC, 0, 
+    8, 4, SIGNAL_SET_CSD_BASIC, 0, 
+    { 1, 0, 2, 3, 4 },
+    {
+      1,    // stuj
+      7,    // volno -> 40 a volno (nepouzito)
+      7,    // 40 a volno 
+      29,   // posun
+      // --------------------------------
+      8,    // vystraha -> 40 a vystraha
+      9,    // ocekavej 40 -> 40 a ocekavej 40
+      32,   // opatrne na privolavaci navest
+      30,   // posun dovolen - nezabezpeceny
+    }
+  },
+  // ---------------- typ 4/132: Hlavní: Oddílové - ŽZČ; 4 znaky
+  {
+    4, 3, SIGNAL_SET_CSD_BASIC, 0, 
+    { 1, 2, 3, 0, 0 },
+    {
+      1,    // stuj
+      2,    // volno
+      3,    // vystraha
+      4,    // ocekavej 40
+    }
+  },
+// ====================================================================
+  // rezerva
+  {}, // 133
+  {}, // 134
+  {}, // 135
+  {}, // 136
+  
+  // ---------------- typ 9/137: Jednoduché návěstidlo - ZČ; 2 znaky
+  {
+    2, 2, SIGNAL_SET_CSD_BASIC, 0, 
+    { 0, 1, 2, 0, 0 },
+    {
+      1,    // stuj
+      2,    // volno
+    }
+  },
+  // ---------------- typ 10/138: Jednoduché: S posunem - ZČB; 4 znaky
+  {
+    4, 3, SIGNAL_SET_CSD_BASIC, 0, 
     { 0, 1, 2, 3, 0 },
     {
       1,    // stuj
       2,    // volno
-      2,    
       29,   // posun
-      // --------------------------------
       32,   // opatrne na privolavaci navest
-      30,   // posun dovolen - bezabezpeceny
-      0,    // test - zhasnuto
-      255,  // test - vse rozsviceno
     }
   },
-  // Definice #4: 2-svetelne, seradovaci. Bila-modra.
+  // ---------------- typ 11/139: Jednoduché: S odbočkou - ZČŽ; 4 znakly
+  {
+    4, 3, SIGNAL_SET_CSD_BASIC, 0, 
+    { 0, 1, 2, 0, 0 },
+    {
+      1,    // stuj
+      2,    // volno
+      7,    // 40 a volno 
+      255,  // test: vsechno ON
+    }
+  },
+// ====================================================================
+  // rezerva
+  {}, // 140
+  {}, // 141
+  {}, // 142
+
+  // ---------------- typ 15/143: Předvěst: výstraha - Ž
   {
     2, 2, SIGNAL_SET_CSD_BASIC, 0, 
+    { 1, 0, 0, 0, 0 },
+    {
+      3,    // vystraha
+      0,    // volno (vse OFF)
+    }
+  },
+  // ---------------- typ 16/144: Předvěst: opakovací výstraha - ŽB; 2 znaky
+  {
+    2, 2, SIGNAL_SET_CSD_BASIC, 0, 
+    { 1, 0, 0, 2, 0 },
+    {
+      23,   // opakovana vystraha
+      0,    // volno (vse OFF)
+    }
+  },
+  // ---------------- typ 17/145: Předvěst: vjezdové - ŽZ; 2 znaky
+  {
+    2, 2, SIGNAL_SET_CSD_BASIC, 0, 
+    { 1, 2, 0, 0, 0 },
+    {
+      3,    // vystraha
+      2,    // volno
+      4,    // Očekávej 40
+      255,  // all ON
+    }
+  },
+  // ---------------- typ 18/146: Předvěst: opakovací vjezdová - ŽZB; 2 znaky
+  {
+    2, 3, SIGNAL_SET_CSD_BASIC, 0, 
+    { 1, 2, 0, 0, 0 },
+    {
+      23,    // opakovana vystraha
+      22,    // opakovana volno
+      24,    // Opakovaná očekávej 40
+      255,   // all ON
+    }
+  },
+// ====================================================================
+  // rezerva
+  {}, // 147
+  {}, // 148
+  {}, // 149
+  // ---------------- typ 22/150: Konec trati - Č; 2 znak
+  {
+    2, 2, SIGNAL_SET_CSD_EMBEDDED, 0, 
+    { 0, 0, 1, 0, 0 },
+    {
+      1,    // stuj
+      0     // all OFF
+    }
+  },
+  // ---------------- typ 23/151: Odjezd jen posunem - ČB
+  {
+    2, 2, SIGNAL_SET_CSD_EMBEDDED, 0, 
+    { 0, 0, 1, 2, 0 },
+    {
+      1,    // stuj
+      30    // posun dovolen - nezabezpeceny
+    }
+  },
+  // ---------------- typ 24/152: Seřaďovací - BM
+  {
+    2, 2, SIGNAL_SET_CSD_EMBEDDED, 0, 
+    { 0, 0, 1, 0, 0, 2 },
+    {
+      28,    // posun zakazan
+      29     // posun dovolen
+    }
+  },
+  // ---------------- typ 25/153: Spádovištní - BČBI
+  {
+    2, 6, SIGNAL_SET_CSD_EMBEDDED, 0,
     { 0, 0, 0, 1, 0, 2 },
     {
-      28,   // posun zakazan
-      29,   // posun povolen
+      1,  // stůj
+      29, // posun
+      20, // zpět
+      25, // přisun soupravy ke spádovišti
+      18, // sunout pomalu
+      19  // sunout rychleji
+    }
+  },
+  // ---------------- typ 26/154: Spádovištní - BMBI
+  {
+    2, 6, SIGNAL_SET_CSD_EMBEDDED, 0,
+    { 0, 0, 0, 1, 0, 2 },
+    {
+      28, // posun zakázán
+      29, // posun
+      20, // zpět opakovaná
+      25, // přisun soupravy ke spádovišti
+      18, // sunout pomalu
+      19  // sunout rychleji
     }
   }
 };
-static_assert(((sizeof(mastTypeDefinitions) + sizeof(mastTypeDefinitions[0]) -1) / sizeof(mastTypeDefinitions[0]) < maxMastTypes), "Too many mast type definitions");
+static_assert(((sizeof(mastTypeDefinitions) + sizeof(mastTypeDefinitions[0]) -1) / sizeof(mastTypeDefinitions[0]) <= maxMastTypes), "Too many mast type definitions");
 
 const byte mastTypeDefinitionCount = ((sizeof(mastTypeDefinitions) + sizeof(mastTypeDefinitions[0]) -1) / sizeof(mastTypeDefinitions[0]));
 
@@ -280,4 +461,3 @@ void signalMastChangeAspectSzdcBasic(int nrSignalMast, byte newAspect) {
 void signalMastChangeAspectCsdMechanical(int nrSignalMast, byte newAspect) {
   signalMastChangeAspect((int)&(csdMechanicalAspects[newAspect]), sizeof(csdBasicAspects) / sizeof(csdBasicAspects[0]), nrSignalMast, newAspect);
 }
-
