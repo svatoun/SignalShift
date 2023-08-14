@@ -87,13 +87,6 @@ const uint16_t CV_PROD_ID_2 = 48;
 const uint16_t CV_PROD_ID_3 = 49;
 const uint16_t CV_PROD_ID_4 = 50;
 
-const uint16_t CV_NUM_MAST_TYPE_START = 51;
-const uint16_t CV_NUM_MAST_TYPE_END = CV_NUM_MAST_TYPE_START + NUM_SIGNAL_MAST;
-
-const uint16_t CV_NUM_MAST_PIN_START = 70;
-const uint16_t CV_NUM_MAST_PIN_END = CV_NUM_MAST_PIN_START + NUM_SIGNAL_MAST;
-static_assert(CV_NUM_MAST_TYPE_END < CV_NUM_MAST_PIN_START, "Too many masts, CV overlap");
-
 const uint16_t START_CV_OUTPUT = 128;
 const uint16_t END_CV_OUTPUT = START_CV_OUTPUT + (SEGMENT_SIZE * NUM_SIGNAL_MAST - 1);
 
@@ -285,32 +278,6 @@ struct MastTypeNameId {
   const char* name;
 };
 
-byte signalMastLightYellowUpperOutput[NUM_SIGNAL_MAST] = { 1, 6, 11, 16, 21, 26, ONA, ONA };          // yellow upper
-byte signalMastLightGreenOutput[NUM_SIGNAL_MAST] = { 2, 7, 12, 17, 22, 27, ONA, ONA };                // green
-byte signalMastLightRedOutput[NUM_SIGNAL_MAST] = { 3, 8, 13, 18, 23, 28, ONA, ONA };                  // red
-byte signalMastLightLunarOutput[NUM_SIGNAL_MAST] = { 4, 9, 14, 19, 24, 29, ONA, ONA };                // lunar
-byte signalMastLightYellowLowerOutput[NUM_SIGNAL_MAST] = { 5, 10, 15, 20, 25, 30, ONA, ONA };         // yellow lower
-byte signalMastLightBlueOutput[NUM_SIGNAL_MAST] = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };         // blue
-byte signalMastLightGreenStripOutput[NUM_SIGNAL_MAST] = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };   // green strip
-byte signalMastLightYellowStripOutput[NUM_SIGNAL_MAST] = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };  // yellow strip
-byte signalMastLightLunarLowerOutput[NUM_SIGNAL_MAST] = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };   // lunar lower
-byte signalMastLightBackwardOutput[NUM_SIGNAL_MAST] = { ONA, ONA, ONA, ONA, ONA, ONA, ONA, ONA };     // backward
-
-typedef byte oneLightOutputs[NUM_SIGNAL_MAST];
-
-oneLightOutputs* lightConfiguration[maxOutputsPerMast] = {
-  &signalMastLightYellowUpperOutput,
-  &signalMastLightGreenOutput,
-  &signalMastLightRedOutput,
-  &signalMastLightLunarOutput,
-  &signalMastLightYellowLowerOutput,
-  &signalMastLightBlueOutput,
-  &signalMastLightGreenStripOutput,
-  &signalMastLightYellowStripOutput,
-  &signalMastLightLunarLowerOutput,
-  &signalMastLightBackwardOutput,
-};
-
 SignalSet signalMastSignalSet[NUM_SIGNAL_MAST] = { SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC, SIGNAL_SET_SZDC_BASIC };  // signal set
 
 byte signalMastNumberAddress[NUM_SIGNAL_MAST] = { 1, 1, 1, 1, 1, 1, 1, 1 };  // number of address
@@ -361,6 +328,8 @@ void setup() {
   pinMode(ACK_BUSY_PIN, OUTPUT);
   digitalWrite(ACK_BUSY_PIN, LOW);
 
+  pinMode(2, INPUT);
+  
   setupShiftPWM();
   // Setup which External Interrupt, the Pin it's associated with that we're using and enable the Pull-Up
   Dcc.pin(digitalPinToInterrupt(2), 2, 1);
@@ -388,11 +357,10 @@ void setup() {
 
 void setupShiftPWM() {
   // put your setup code here, to run once:
-  pinMode(13, OUTPUT);
-  pinMode(11, OUTPUT);
-  pinMode(8, OUTPUT);
+  //pinMode(13, OUTPUT);
+  //pinMode(11, OUTPUT);
+  //pinMode(8, OUTPUT);
 
-  pinMode(2, INPUT);
 
   ShiftPWM.SetAmountOfRegisters(NUM_8BIT_SHIFT_REGISTERS);
   ShiftPWM.SetPinGrouping(1);  //This is the default, but I added here to demonstrate how to use the funtion
@@ -430,19 +398,29 @@ void loop() {
 int findSignalIndex(int address, int& position) {
   for (int i = 0; i < NUM_SIGNAL_MAST; i++) {
     int num = signalMastNumberAddress[i];
+    Serial.print("Mast "); Serial.print(i); Serial.print(" Addresses: "); Serial.println(num);
     if (address < num) {
+      Serial.print("Found index "); Serial.print(i); Serial.print(" pos "); Serial.println(address);
       position = address;
       return i;
     }
+    address -= num;
   }
   return -1;
 }
 
-void notifyDccAccTurnoutOutput(uint16_t Addr, uint8_t Direction, uint8_t OutputPower) {
+void notifyDccAccState (uint16_t Addr, uint16_t BoardAddr, uint8_t OutputAddr, uint8_t State) {
+  Serial.println("DCC turnout");
+}
 
+void notifyDccAccTurnoutOutput(uint16_t Addr, uint8_t Direction, uint8_t OutputPower) {
+  Serial.println("DCC turnout");
   if (rocoAddress) {
     Addr = Addr + 4;
   }
+  Serial.print("Addr = "); Serial.println(Addr);
+  Serial.print("Min = "); Serial.println(thisDecoderAddress);
+  Serial.print("Max = "); Serial.println(maxDecoderAddress);
   if ((Addr < thisDecoderAddress)
       || (Addr >= maxDecoderAddress)) {
     return;
@@ -891,25 +869,25 @@ void initLocalVariablesSignalMast() {
   static byte usedOutputs[(NUM_OUTPUTS + 7) / 8] = { 0 };
 
   for (int i = 0; i < NUM_SIGNAL_MAST; i++) {
-    signalMastLightYellowUpperOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // yellow upper
+    recordOutput(usedOutputs, Dcc.getCV(counter));  // yellow upper
     counter++;
-    signalMastLightGreenOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // green
+    recordOutput(usedOutputs, Dcc.getCV(counter));  // green
     counter++;
-    signalMastLightRedOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // red
+    recordOutput(usedOutputs, Dcc.getCV(counter));  // red
     counter++;
-    signalMastLightLunarOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // lunar
+    recordOutput(usedOutputs, Dcc.getCV(counter));  // lunar
     counter++;
-    signalMastLightYellowLowerOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // yellow lower
+    recordOutput(usedOutputs, Dcc.getCV(counter));  // yellow lower
     counter++;
-    signalMastLightBlueOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // blue
+    recordOutput(usedOutputs, Dcc.getCV(counter));  // blue
     counter++;
-    signalMastLightGreenStripOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // green strip
+    recordOutput(usedOutputs, Dcc.getCV(counter));  // green strip
     counter++;
-    signalMastLightYellowStripOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // yellow strip
+    recordOutput(usedOutputs, Dcc.getCV(counter));  // yellow strip
     counter++;
-    signalMastLightLunarLowerOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // lunar lower
+    recordOutput(usedOutputs, Dcc.getCV(counter));  // lunar lower
     counter++;
-    signalMastLightBackwardOutput[i] = recordOutput(usedOutputs, Dcc.getCV(counter));  // backward
+    recordOutput(usedOutputs, Dcc.getCV(counter));  // backward
     counter++;
 
     byte mastTypeOrSignalSet = Dcc.getCV(counter);
@@ -1260,13 +1238,10 @@ void signalMastChangeAspect(int progMemOffset, int tableSize, int nrSignalMast, 
   // Process LightFunction instructions
   int cvBase = (sizeof(MastSettings) * nrSignalMast) + START_CV_OUTPUT;
   for (int i = 0; i < maxOutputsPerMast; i++) {
-    /*
-    const oneLightOutputs& outConfig = *(lightConfiguration[i]);
-    int nOutput = outConfig[nrSignalMast];
-    */
-
     int nOutput = Dcc.getCV(cvBase + i);
-   
+    if (debugAspects) {
+      Serial.print("Change output "); Serial.print(nOutput); Serial.print(" => "); Serial.println(*(byte*)(void*)&buffer[i]);
+    }
     changeLightState2(nOutput, buffer[i]);
   }
 }
@@ -1414,6 +1389,27 @@ void notifyCVChange(uint16_t CV, uint8_t Value) {
   Serial.print(CV);
   Serial.print(F(" := "));
   Serial.println(Value);
+
+  if (CV >= START_CV_OUTPUT && CV <= END_CV_OUTPUT) {
+    int diff = CV - START_CV_OUTPUT;
+    if ((diff % SEGMENT_SIZE) == maxOutputsPerMast) {
+      changeMastType(diff / SEGMENT_SIZE, Value);
+    }
+    initLocalVariables();
+    return;
+  }
+  if (CV >= START_CV_OUTPUT_BASE && CV <= END_CV_OUTPUT_BASE) {
+    int mast = CV - START_CV_OUTPUT_BASE;
+    boolean shift;
+    if (Value > 100) {
+      Value -= 100;
+      shift = true;
+    } else {
+      shift = false;
+    }
+    reassignMastOutputs(mast, Value, shift);
+    initLocalVariables();
+  }
 }
 
 void notifyDccCVChange(uint16_t CV, uint8_t Value) {
@@ -1478,27 +1474,6 @@ void notifyDccCVChange(uint16_t CV, uint8_t Value) {
     fadeRate = Value;
     initializeFadeTime();
     return;
-  }
-
-  if (CV >= START_CV_OUTPUT && CV <= END_CV_OUTPUT) {
-    int diff = CV - START_CV_OUTPUT;
-    if ((diff % SEGMENT_SIZE) == maxOutputsPerMast) {
-      changeMastType(diff / SEGMENT_SIZE, Value);
-    }
-    initLocalVariables();
-    return;
-  }
-  if (CV >= START_CV_OUTPUT_BASE && CV <= END_CV_OUTPUT_BASE) {
-    int mast = CV - START_CV_OUTPUT_BASE;
-    boolean shift;
-    if (Value > 100) {
-      Value -= 100;
-      shift = true;
-    } else {
-      shift = false;
-    }
-    reassignMastOutputs(mast, Value, shift);
-    initLocalVariables();
   }
 }
 
@@ -1573,7 +1548,7 @@ const struct MastTypeDefinition& copySignalMastTypeDefinition(byte typeId) {
   if (typeId >= mastTypeDefinitionCount) {
     typeId = 0;
   }
-  Serial.print(F("Copy from id ")); Serial.println(typeId);
+  // Serial.print(F("Copy from id ")); Serial.println(typeId);
   static MastTypeDefinition buffer;
   int progMemOffset = (int)(void*)(mastTypeDefinitions + typeId);
   byte* out = (byte*)(void*)&(buffer);

@@ -190,7 +190,25 @@ const char TYPE_0_NAME[] PROGMEM = "o4";
 const char TYPE_1_NAME[] PROGMEM = "v5";
 const char TYPE_2_NAME[] PROGMEM = "v4p";
 const char TYPE_3_NAME[] PROGMEM = "v4o";
-const char TYPE_4_NAME[] PROGMEM = "odd";
+const char TYPE_4_NAME[] PROGMEM = "o3r";
+const char TYPE_5_NAME[] PROGMEM = "o3o";
+const char TYPE_6_NAME[] PROGMEM = "odd";
+
+const char TYPE_10_NAME[] PROGMEM = "j2";
+const char TYPE_11_NAME[] PROGMEM = "j3p";
+const char TYPE_12_NAME[] PROGMEM = "j3o";
+
+const char TYPE_15_NAME[] PROGMEM = "p1";
+const char TYPE_16_NAME[] PROGMEM = "p2o";
+const char TYPE_17_NAME[] PROGMEM = "pv2";
+const char TYPE_18_NAME[] PROGMEM = "pv3o";
+
+const char TYPE_22_NAME[] PROGMEM = "kon";
+const char TYPE_23_NAME[] PROGMEM = "opo";
+const char TYPE_24_NAME[] PROGMEM = "ser";
+const char TYPE_25_NAME[] PROGMEM = "spc";
+const char TYPE_26_NAME[] PROGMEM = "spm";
+
 const char TYPE_E_NAME[] PROGMEM = "";
 
 const MastTypeNameId mastTypeNames[] PROGMEM = {
@@ -199,7 +217,24 @@ const MastTypeNameId mastTypeNames[] PROGMEM = {
   { 3, TYPE_2_NAME }, 
   { 4, TYPE_3_NAME }, 
   { 5, TYPE_4_NAME },
+  { 6, TYPE_5_NAME },
+  { 7, TYPE_6_NAME },
 
+  { 11, TYPE_10_NAME },
+  { 12, TYPE_11_NAME },
+  { 13, TYPE_12_NAME },
+  
+  { 16, TYPE_15_NAME },
+  { 17, TYPE_16_NAME },
+  { 18, TYPE_17_NAME },
+  { 19, TYPE_18_NAME },
+  
+  { 23, TYPE_22_NAME },
+  { 24, TYPE_23_NAME },
+  { 25, TYPE_24_NAME },
+  { 26, TYPE_25_NAME },
+  { 27, TYPE_26_NAME },
+ 
   { 0, NULL }
 };
 
@@ -283,7 +318,40 @@ const MastTypeDefinition mastTypeDefinitions[32] PROGMEM = {
       30,   // posun dovolen - nezabezpeceny
     }
   },
-  // ---------------- typ 4/132: Hlavní: Oddílové - ŽZČ; 4 znaky
+  // ---------------- typ 4/132: Hlavní: Odjezd: Jen rovne - ZČB; 8 znaku
+  {
+    8, 3, SIGNAL_SET_CSD_BASIC, 0, 
+    { 0, 1, 2, 3 },
+    {
+      1,    // stuj
+      2,    // volno
+      2,    // 40 a volno (dolni zluta) => volno
+      29,   // posun
+      // --------------------------------
+      32,   // opatrne na privolavaci navest
+      30,   // posun dovolen - nezabezpeceny
+      0,    // test - zhasnuto
+      255,  // test - vse rozsviceno
+    }
+  },
+  // ---------------- typ 5/133: Hlavní: Odjezd: Jen odbočkou - ČBŽ; 8 znaku
+  {
+    8, 3, SIGNAL_SET_CSD_BASIC, 0, 
+    { 1, 0, 2, 3, 4 },
+    {
+      1,    // stuj
+      7,    // volno -> 40 a volno (nepouzito)
+      7,    // 40 a volno 
+      29,   // posun
+      // --------------------------------
+      32,   // opatrne na privolavaci navest
+      30,   // posun dovolen - nezabezpeceny
+      0,    // test - zhasnuto
+      255,  // test - vse rozsviceno
+    }
+  },
+
+  // ---------------- typ 6/134: Hlavní: Oddílové - ŽZČ; 4 znaky
   {
     4, 3, SIGNAL_SET_CSD_BASIC, 0, 
     { 1, 2, 3, 0, 0 },
@@ -296,12 +364,11 @@ const MastTypeDefinition mastTypeDefinitions[32] PROGMEM = {
   },
 // ====================================================================
   // rezerva
-  {}, // 133
-  {}, // 134
   {}, // 135
   {}, // 136
+  {}, // 137
   
-  // ---------------- typ 9/137: Jednoduché návěstidlo - ZČ; 2 znaky
+  // ---------------- typ 10/138: Jednoduché návěstidlo - ZČ; 2 znaky
   {
     2, 2, SIGNAL_SET_CSD_BASIC, 0, 
     { 0, 1, 2, 0, 0 },
@@ -310,7 +377,7 @@ const MastTypeDefinition mastTypeDefinitions[32] PROGMEM = {
       2,    // volno
     }
   },
-  // ---------------- typ 10/138: Jednoduché: S posunem - ZČB; 4 znaky
+  // ---------------- typ 11/139: Jednoduché: S posunem - ZČB; 4 znaky
   {
     4, 3, SIGNAL_SET_CSD_BASIC, 0, 
     { 0, 1, 2, 3, 0 },
@@ -321,10 +388,10 @@ const MastTypeDefinition mastTypeDefinitions[32] PROGMEM = {
       32,   // opatrne na privolavaci navest
     }
   },
-  // ---------------- typ 11/139: Jednoduché: S odbočkou - ZČŽ; 4 znakly
+  // ---------------- typ 12/140: Jednoduché: S odbočkou - ZČŽ; 4 znakly
   {
     4, 3, SIGNAL_SET_CSD_BASIC, 0, 
-    { 0, 1, 2, 0, 0 },
+    { 0, 1, 2, 0, 3 },
     {
       1,    // stuj
       2,    // volno
@@ -334,7 +401,6 @@ const MastTypeDefinition mastTypeDefinitions[32] PROGMEM = {
   },
 // ====================================================================
   // rezerva
-  {}, // 140
   {}, // 141
   {}, // 142
 
@@ -358,7 +424,7 @@ const MastTypeDefinition mastTypeDefinitions[32] PROGMEM = {
   },
   // ---------------- typ 17/145: Předvěst: vjezdové - ŽZ; 2 znaky
   {
-    2, 2, SIGNAL_SET_CSD_BASIC, 0, 
+    4, 2, SIGNAL_SET_CSD_BASIC, 0, 
     { 1, 2, 0, 0, 0 },
     {
       3,    // vystraha
@@ -369,8 +435,8 @@ const MastTypeDefinition mastTypeDefinitions[32] PROGMEM = {
   },
   // ---------------- typ 18/146: Předvěst: opakovací vjezdová - ŽZB; 2 znaky
   {
-    2, 3, SIGNAL_SET_CSD_BASIC, 0, 
-    { 1, 2, 0, 0, 0 },
+    4, 3, SIGNAL_SET_CSD_BASIC, 0, 
+    { 1, 2, 0, 3, 0 },
     {
       23,    // opakovana vystraha
       22,    // opakovana volno
@@ -404,7 +470,7 @@ const MastTypeDefinition mastTypeDefinitions[32] PROGMEM = {
   // ---------------- typ 24/152: Seřaďovací - BM
   {
     2, 2, SIGNAL_SET_CSD_EMBEDDED, 0, 
-    { 0, 0, 1, 0, 0, 2 },
+    { 0, 0, 0, 1, 0, 2 },
     {
       28,    // posun zakazan
       29     // posun dovolen
@@ -413,7 +479,7 @@ const MastTypeDefinition mastTypeDefinitions[32] PROGMEM = {
   // ---------------- typ 25/153: Spádovištní - BČBI
   {
     2, 6, SIGNAL_SET_CSD_EMBEDDED, 0,
-    { 0, 0, 0, 1, 0, 2 },
+    { 0, 0, 2, 1, 0, 0, 0, 0, 3, 4 },
     {
       1,  // stůj
       29, // posun
@@ -426,7 +492,7 @@ const MastTypeDefinition mastTypeDefinitions[32] PROGMEM = {
   // ---------------- typ 26/154: Spádovištní - BMBI
   {
     2, 6, SIGNAL_SET_CSD_EMBEDDED, 0,
-    { 0, 0, 0, 1, 0, 2 },
+    { 0, 0, 0, 1, 0, 2, 0, 0, 3, 4 },
     {
       28, // posun zakázán
       29, // posun

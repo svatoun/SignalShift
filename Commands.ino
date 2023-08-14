@@ -26,6 +26,7 @@ void commandPrintMastDef() {
 }
 
 void commandDump() {
+  Serial.print("ADR:"); Serial.println(Dcc.getAddr());
   dumpAllMasts();
 }
 
@@ -39,9 +40,9 @@ void dumpAllMasts() {
 }
 
 boolean isMastActive(int nMast) {
+  int cvBase = sizeof(MastSettings) * nMast + START_CV_OUTPUT;
   for (int i = 0; i < maxOutputsPerMast; i++) {
-    const oneLightOutputs& outConfig = *(lightConfiguration[i]);
-    int o = outConfig[nMast];
+    int o = Dcc.getCV(cvBase + i); 
     if ((o != ONA) && (o < NUM_OUTPUTS + 1)) {
       return true;
     }
@@ -49,12 +50,57 @@ boolean isMastActive(int nMast) {
   return false;
 }
 
+boolean shouldPrintMastOutputs(int nMast) {
+  int cvBase = sizeof(MastSettings) * nMast + START_CV_OUTPUT;
+  int control = Dcc.getCV(cvBase + maxOutputsPerMast);
+  if (!(control & usesCodes)) {
+    return true;
+  }
+  int minLight = findMinLightIndex(nMast);
+  
+  const struct MastTypeDefinition& def = copySignalMastTypeDefinition(toTemplateIndex(control));
+  for (int i = 0; i < maxOutputsPerMast; i++) {
+    int out = Dcc.getCV(cvBase + i);
+    if (out > 0) {
+      out = out - minLight + 1;
+    }
+    if (out != def.outputs[i]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+boolean shouldPrintAspects(int nMast) {
+  int cvBase = sizeof(MastSettings) * nMast + START_CV_OUTPUT;
+  int control = Dcc.getCV(cvBase + maxOutputsPerMast);
+  if (!(control & usesCodes)) {
+    return true;
+  }
+  
+  int addresses = Dcc.getCV(cvBase + maxOutputsPerMast + 2);
+  int limit = findNumberOfSignals(addresses, control);
+
+  int aspectBase = START_CV_ASPECT_TABLE + nMast * maxAspects;
+
+  const struct MastTypeDefinition& def = copySignalMastTypeDefinition(toTemplateIndex(control));
+  for (int i = 0; i < limit; i++) {
+    int out = Dcc.getCV(aspectBase + i);
+    if (out != def.code2Aspect[i]) {
+      return true;
+    }
+  }
+  return false;
+}
+
+
 void printMastDef(int nMast) {
   int first = 0xff;
   int cnt = 0;
+  
+  int cvBase = sizeof(MastSettings) * nMast + START_CV_OUTPUT;
   for (int i = 0; i < maxOutputsPerMast; i++) {
-    const oneLightOutputs& outConfig = *(lightConfiguration[i]);
-    int o = outConfig[nMast];
+    int o = Dcc.getCV(cvBase + i); 
     if ((o != ONA) && (o < NUM_OUTPUTS + 1)) {
       // Serial.print("output "); Serial.print(i); Serial.print(" = "); Serial.println(o);
       if (o < first) {
@@ -68,9 +114,8 @@ void printMastDef(int nMast) {
     return;
   }
   Serial.print(F("DEF:")); Serial.print(nMast + 1); Serial.print(':'); 
-  Serial.print(first); Serial.print(':'); Serial.print(cnt); Serial.print(':'); 
+  Serial.print(first); Serial.print(':');   
 
-  int cvBase = START_CV_OUTPUT + nMast * SEGMENT_SIZE;
   int mode = Dcc.getCV(cvBase + 10);
   switch (mode & signalSetControlType) {
     case bitwiseControl:
@@ -91,46 +136,82 @@ void printMastDef(int nMast) {
   }
   Serial.print(':');
   boolean codes = false;
+  int set = 1;
+  int defcode = 0;
   if (usesCodes & mode) {
     int type = mode & signalSetType;
-    if (type < mastTypeNameCount) {
-      codes = true;
-      char buffer[10];      
-      int idx = (int)&(mastTypeNames[type]);
-      strcpy_P(buffer, (char*)pgm_read_word_near(idx + 1)); 
-      Serial.print('+'); Serial.println(buffer);
+    codes = true;
+    Serial.print('+'); 
+    
+    char buffer[10];      
+    boolean printed = false;
+    for (int i = 0; i < mastTypeNameCount; i++) {
+      int idx = (int)&(mastTypeNames[i]);
+      int n = pgm_read_byte_near(idx); 
+      int charIdx = pgm_read_word_near(idx + 1);
+      if (n == 0) {
+        if (charIdx == 0) {
+          break;  
+        } else {
+          continue;
+        }
+      }
+      n--;
+      if (n == type) {
+        strcpy_P(buffer, (char*)charIdx); 
+        if (*buffer != 0) {
+          Serial.println(buffer);
+          printed = true;
+        }
+        break;
+      }
     }
+    if (!printed) {
+       Serial.println(type);
+    }
+    const struct MastTypeDefinition& def = copySignalMastTypeDefinition(toTemplateIndex(type));
+    set = def.signalSet;
+    defcode = def.defaultCode;
+    
   }
   if (!codes) {
+    Serial.print(cnt); Serial.print(':'); 
     Serial.println(signalMastNumberSigns[nMast]);
   }
-  if (signalMastSignalSet[nMast] != 1 || signalMastDefaultAspectIdx[nMast] != 0) {
+  if (signalMastSignalSet[nMast] != set || signalMastDefaultAspectIdx[nMast] != defcode) {
     Serial.print(F("  MSS:")); Serial.print(signalMastSignalSet[nMast]); Serial.print(':'); Serial.println(signalMastDefaultAspectIdx[nMast]);
   }
-  /*
-  Serial.print(F("  OUT:"));
-  printMastOutputs(nMast, false);
-  printAspectMap(nMast);
-  */
+  if (shouldPrintMastOutputs(nMast)) {
+    printMastOutputs(nMast, false);
+  }
+  if (shouldPrintAspects(nMast)) {
+    printAspectMap(nMast);
+  }
   Serial.println(F("END"));
 }
 
 void printMastOutputs(int nMast, boolean suppressFull) {
   byte lights[maxOutputsPerMast];
   int cnt = 0;
+
+  int cvBase = sizeof(MastSettings) * nMast + START_CV_OUTPUT;
   for (int i = 0; i < maxOutputsPerMast; i++) {
-    const oneLightOutputs& outConfig = *(lightConfiguration[i]);
-    lights[i] = outConfig[nMast];
+    lights[i] = Dcc.getCV(cvBase + i); 
     if (lights[i] != ONA && lights[i] <= NUM_OUTPUTS) {
       cnt++;
     }
   }
   int skipCnt = 0;
   int cnt2 =  0;
+  boolean outPrinted = false;
   for (int x = 0; x < maxOutputsPerMast; x++) {
     int a = lights[x];
-    if (a >= ONA) {
+    if (a == 0 || a > NUM_OUTPUTS) {
       if (skipCnt++ == 0) {
+        if (!outPrinted) {
+          outPrinted = true;
+          Serial.print(F("OUT:"));
+        }
         Serial.print('-');
       }
       continue;
@@ -152,14 +233,18 @@ void printMastOutputs(int nMast, boolean suppressFull) {
     if (x == 0 && len == cnt && suppressFull) {
       return;
     }
+    if (!outPrinted) {
+      outPrinted = true;
+      Serial.print(F("OUT:"));
+    }
     if (len > 2) {
-      Serial.print(a + 1); Serial.print('-'); Serial.print(a + len);
+      Serial.print(a); Serial.print('-'); Serial.print(a + len - 1);
       x = seq - 1; // will increment to seq in loop reinit
     } else if (len == 2) {
-      Serial.print(a + 1); Serial.print(':'); Serial.print(a + 2);
+      Serial.print(a); Serial.print(':'); Serial.print(a + 1);
       x++;
     } else {
-      Serial.print(a + 1); 
+      Serial.print(a); 
     }
     cnt2 += len;
     if (cnt2 == cnt) {
@@ -204,7 +289,12 @@ int findSameAspect(int nMast) {
 }
 
 void printAspectMap(int nMast) {
-  int limit = 1 << signalMastNumberAddress[nMast];
+  int cvBase = sizeof(MastSettings) * nMast + START_CV_OUTPUT;
+  byte mastTypeOrSignalSet = Dcc.getCV(cvBase + maxOutputsPerMast);
+  int addresses = Dcc.getCV(cvBase + maxOutputsPerMast + 2);
+  int limit = findNumberOfSignals(addresses, mastTypeOrSignalSet);
+  Serial.print("type = "); Serial.println(mastTypeOrSignalSet);
+  Serial.print("Limit = "); Serial.println(limit);
   int copyOf = findSameAspect(nMast);
   if (copyOf >= 0) {
     if (copyOf >= NUM_SIGNAL_MAST) {
@@ -217,20 +307,25 @@ void printAspectMap(int nMast) {
     int cv = START_CV_ASPECT_TABLE + (nMast * maxAspects);
     for (int x = 0; x < limit; x++, cv++) {
       aspectMap[x] = Dcc.getCV(cv);
-      if (aspectMap[x] < maxAspects) {
+      if (aspectMap[x] <= maxAspects && aspectMap[x] > 0) {
         cnt++;
       }
     }
     int skipCnt = 0;
+    int l = 0;
     Serial.print(F("  MAP:"));
     for (int x = 0; x < limit; x++) {
       int a = aspectMap[x];
       int seq = x + 1;
-      if (a >= maxAspects) {
+      l = x;
+      if (a == 0 || a > maxAspects) {
         skipCnt++;
         continue;
       }
       if (skipCnt > 0) {
+        if (x > 0) {
+          Serial.print(':');
+        }
         Serial.print('-');
         if (skipCnt == 2) {
           Serial.print('-');
@@ -256,6 +351,9 @@ void printAspectMap(int nMast) {
       }
     }
     if (skipCnt > 0) {
+      if (l > 0) {
+        Serial.print(':');
+      }
       Serial.print('-');
       if (skipCnt == 2) {
         Serial.print('-');
@@ -299,7 +397,7 @@ void commandDefineMast() {
     return;
   }
 
-  byte mastType = 0;
+  byte mastType = -1;
 
   int mode = -1;
   switch (*inputPos) {
@@ -339,35 +437,49 @@ void commandDefineMast() {
   if (*inputPos == '+') {
     const char *s = ++inputPos;
     char *e = strchr(inputPos, ':');
+    char *next;
     if (e != NULL) {
       *e = 0;
-      inputPos = e + 1;
+      next = e + 1;
     } else {
       e = inputPos + strlen(inputPos);
-      inputPos = e;
+      next = e;
     }
     // mast type from template
+    Serial.print("Trying to match: "); Serial.println(s);
     char buffer[10];
     for (int i = 0; i < 32; i++) {
       int idx = (int)&(mastTypeNames[i]);
       int id = pgm_read_byte_near(idx);
+      int charIdx = pgm_read_word_near(idx + 1);
       if (id == 0) {
-        break;
+        if (charIdx == 0) {
+          break;
+        } else {
+          continue;
+        }
       }
       id--;
-
-      strcpy_P(buffer, (char*)pgm_read_word_near(idx + 1)); 
-      Serial.print("Comparing id "); Serial.print(id); Serial.print(" - "); Serial.println(buffer);
+      
+      strcpy_P(buffer, (char*)charIdx); 
 
       if (strcmp(buffer, s) == 0) {
         mastType = usesCodes | mode | id;
-        Serial.print("Found, mastType"); Serial.println(mastType, HEX);
+        Serial.print("Found id: "); Serial.println(mastType);
         break;
       }
     }
+    if (mastType < 0) {
+      mastType = nextNumber();
+    }
+    if (mastType < 0) {
+      Serial.println("Invalid mast type");
+      return;
+    }
+    inputPos = next;
   }
 
-  if (mastType == 0) {
+  if (mastType < 0) {
     numLights = nextNumber();
     if (numLights < 1 || (firstOut + numLights > NUM_OUTPUTS) || numLights > maxOutputsPerMast) {
       Serial.println(F("Invalid number of lights"));
@@ -397,18 +509,17 @@ void commandDefineMast() {
     Dcc.setCV(cvBase + 11, 0);
     signalMastSignalSet[nMast -1] = SIGNAL_SET_CSD_BASIC;
   } else {
-    const struct MastTypeDefinition& def = copySignalMastTypeDefinition(toTemplateIndex(signalSetOrMastType));
+    const struct MastTypeDefinition& def = copySignalMastTypeDefinition(toTemplateIndex(mastType));
     numSignals = def.codeCount;
     numLights = def.lightCount;
     defSignal = def.defaultCode;
     saveTemplateOutputsToCVs(def, (nMast - 1), firstOut);
+
+      // the signal set number
+    Dcc.setCV(cvBase + 10, mastType);
   }
   
   bits = findRequiredAddrCount(numSignals, mode);
-  if (bits < 1 || bits > 5) {
-    Serial.println(F("Invalid number of signals"));
-    return;
-  }
   // number of addresses = bits
   Serial.print("Wrote to CV #"); Serial.println(cvBase + 12, HEX);
   Dcc.setCV(cvBase + 12, bits);
@@ -503,36 +614,43 @@ void commandMastSet() {
 extern int inputDelim;
 
 void commandMapOutput() {
-  int nMast = nextNumber();
-  if (nMast < 1 || nMast > NUM_SIGNAL_MAST) {
-    Serial.println(F("Invalid mast ID"));
+  if (definedMast < 0) {
+    Serial.println(F("No mast opened"));
     return;
   }
-  int out = -1;
-
-  nMast--;
+  int nMast = definedMast - 1;
   int outCV = START_CV_OUTPUT + (nMast) * SEGMENT_SIZE;
   int cnt = 0;
   while (*inputPos) {
     while (*inputPos == '-') {
       inputPos++;
-      if (*inputPos == ':' || *inputPos == '-' || *inputPos == 0) {
+      if (*inputPos == ':' || *inputPos == '-') {
+        Dcc.setCV(outCV, ONA);
         outCV++;
         cnt++;
-        *inputPos++;
         continue;
+      } else if (!*inputPos) {
+        Dcc.setCV(outCV, ONA);
+        outCV++;
+        cnt++;
+        break;
       } else if (*inputPos != '-') {
         int n = nextNumber();
         if (n < 0 || n + cnt > maxOutputsPerMast) {
           Serial.println(F("Too much skipped"));
           return;
         }
+        for (int x = 0; x < n; x++) {
+          Dcc.setCV(x + outCV, ONA);
+        }
         cnt += n;
         outCV+= n;
-        continue;
       }
     }
-    out = nextNumber(true);
+    if (!*inputPos) {
+      break;
+    }
+    int out = nextNumber(true);
     if (out < 1 || out > NUM_OUTPUTS) {
       Serial.println(F("Invalid output"));
       return;
@@ -541,7 +659,7 @@ void commandMapOutput() {
       Serial.println(F("Many outputs"));
       return;
     }
-    out--;
+    
     if (inputDelim == '-') {
       int to = nextNumber(false);
 
@@ -554,11 +672,9 @@ void commandMapOutput() {
         return;
       }
       Serial.print("out = "); Serial.print(out); Serial.print(" to "); Serial.println(to);
-      for (int i = out; i < to; i++) {
+      for (int i = out; i <= to; i++) {
         Serial.print("Add output "); Serial.println(out);
         Dcc.setCV(outCV, out);
-        oneLightOutputs& outConfig = *(lightConfiguration[cnt]);
-        outConfig[nMast] = out;
         cnt++;
         out++;
         outCV++;
@@ -566,16 +682,12 @@ void commandMapOutput() {
     } else {
       Serial.print("Add output "); Serial.println(out);
       Dcc.setCV(outCV, out);
-      oneLightOutputs& outConfig = *(lightConfiguration[cnt]);
-      outConfig[nMast] = out;
       cnt++;
       outCV++;
     }
   }
   while (cnt < maxOutputsPerMast) {
-      Dcc.setCV(outCV, ONA);
-      oneLightOutputs& outConfig = *(lightConfiguration[cnt]);
-      outConfig[nMast] = ONA;
+      Dcc.setCV(outCV++, ONA);
       cnt++;
   }
 }
@@ -600,22 +712,35 @@ void commandMapAspects() {
     }
     if (*inputPos == '-') {
       inputPos++;
+      if (*inputPos == ':' || *inputPos == '-') {
+        Dcc.setCV(cvBase + cur, 255);
+        cur++;
+        continue;
+      } else if (!*inputPos) {
+        Dcc.setCV(cvBase + cur, 255);
+        cur++;
+        break;
+      } else if (*inputPos != '-') {
+        int n = nextNumber();
+        if (n < 1 || cur + n > limit) {
+          Serial.print(F("Invalid len"));
+          return;
+        }
+        for (int x = 0; x < n; x++) {
+          Dcc.setCV(x + cur, ONA);
+        }
+        cur += n;
+      }
+
       if (*inputPos == '-' || *inputPos == ':' || *inputPos == 0) {
         do {
           Dcc.setCV(cvBase + cur, 255);
         } while (*(inputPos++) == '-');
         continue;
       }
-      int n = nextNumber();
-      if (n < 1 || cur + n > limit) {
-        Serial.print(F("Invalid len"));
-        return;
-      }
-      for (int i = 0; i < n; i++) {
-        Dcc.setCV(cvBase + cur, 255);
-        cur++;
-      }
-      continue;
+    }
+    if (!*inputPos) {
+      break;
     }
     if (*inputPos == '=') {
       inputPos++;
@@ -627,11 +752,6 @@ void commandMapAspects() {
       continue;
     }
 
-    if (*inputPos == '-') {
-      inputPos++;
-      cur++;
-      continue;
-    }
     int aspect = nextNumber(true);
     if (aspect < 0) {
       break;
@@ -694,6 +814,47 @@ void commandSave() {
   
 }
 
+void commandAddress() {
+  int n = nextNumber();
+  if (n < 1 || n > 2048) {
+    Serial.println("Invalid DCC address");
+    return;
+  }
+  if (n < 128) {
+    Dcc.setCV(CV_ACCESSORY_DECODER_ADDRESS_MSB, 0);
+    Dcc.setCV(CV_ACCESSORY_DECODER_ADDRESS_LSB, n);
+    Dcc.setCV(1, n);
+    Dcc.setCV(29, Dcc.getCV(29) & (~32));
+  } else {
+    Dcc.setCV(CV_ACCESSORY_DECODER_ADDRESS_MSB, n >> 8);
+    Dcc.setCV(CV_ACCESSORY_DECODER_ADDRESS_LSB, n % 255);
+    Dcc.setCV(1, n);
+    Dcc.setCV(29, Dcc.getCV(29) | 32);
+  }
+}
+
+void commandDccTurnout() {
+  int tnt = nextNumber();
+  if (tnt < 1) {
+    Serial.print("Invalid turnout");
+    return;
+  }
+  int d = 0;
+  switch (*inputPos) {
+    case '-': case '=': case '0': case 'r': case 'R':
+      d = 1;
+      break;
+    case '+': case '/': case '1': case 'o': case 'O':
+      d = 0;
+      break;
+    default:
+      Serial.println(F("Invalid direction"));
+      return;
+  }
+  Serial.print(F("Set turnout ")); Serial.print(tnt); Serial.print(' '); Serial.println(d ? F("Straight") : F("Diverging"));
+  notifyDccAccTurnoutOutput(tnt, d, 0);
+}
+
 boolean handleSignals(ModuleCmd cmd) {
   switch (cmd) {
     case initialize:
@@ -708,7 +869,8 @@ boolean handleSignals(ModuleCmd cmd) {
       registerLineCommand("END", &commandEnd);
       registerLineCommand("MAP", &commandMapAspects);
       registerLineCommand("OVR", &commandOverride);
-
+      registerLineCommand("ADR", &commandAddress);
+      registerLineCommand("TNT", &commandDccTurnout);
       break;
   }
 }
