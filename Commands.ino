@@ -206,7 +206,7 @@ void printMastOutputs(int nMast, boolean suppressFull) {
   boolean outPrinted = false;
   for (int x = 0; x < maxOutputsPerMast; x++) {
     int a = lights[x];
-    if (a == 0 || a > NUM_OUTPUTS) {
+    if (a == ONA || a > NUM_OUTPUTS) {
       if (skipCnt++ == 0) {
         if (!outPrinted) {
           outPrinted = true;
@@ -798,10 +798,10 @@ void commandOverride() {
   for (int i = n - 1; i < to; i++) {
     if (level < 0) {
       bitWrite(overrides[i / 8], i & 0x07, false);
-      ShiftPWM.SetOne(numberToPhysOutput(i), 0);
+//      ShiftPWM.SetOne(numberToPhysOutput(i), 0);
     } else {
       bitWrite(overrides[i / 8], i & 0x07, true);
-      ShiftPWM.SetOne(numberToPhysOutput(i), level);
+//      ShiftPWM.SetOne(numberToPhysOutput(i), level);
     }
   }
 }

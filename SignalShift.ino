@@ -19,6 +19,8 @@
 
 #include "Common.h"
 
+#define Shift
+
 // ------- Diagnostic setup -----------
 const boolean debugFadeOnOff = false;
 const boolean debugLightFlip = false;
@@ -70,7 +72,9 @@ const bool ShiftPWM_invertOutputs = true;
 #define SHIFTPWM_USE_TIMER2
 
 // must be included after #define for timer
+#ifdef Shift
 #include <ShiftPWM.h>
+#endif
 
 /* ------------ Supported CV numbers ------------------ */
 const uint16_t CV_AUXILIARY_ACTIVATION = 2;
@@ -361,11 +365,12 @@ void setupShiftPWM() {
   //pinMode(11, OUTPUT);
   //pinMode(8, OUTPUT);
 
-
+#ifdef Shift
   ShiftPWM.SetAmountOfRegisters(NUM_8BIT_SHIFT_REGISTERS);
   ShiftPWM.SetPinGrouping(1);  //This is the default, but I added here to demonstrate how to use the funtion
   ShiftPWM.Start(pwmFrequency, maxBrightness);
   ShiftPWM.SetAll(maxBrightness);
+#endif
 }
 
 
@@ -398,9 +403,9 @@ void loop() {
 int findSignalIndex(int address, int& position) {
   for (int i = 0; i < NUM_SIGNAL_MAST; i++) {
     int num = signalMastNumberAddress[i];
-    Serial.print("Mast "); Serial.print(i); Serial.print(" Addresses: "); Serial.println(num);
+    // Serial.print("Mast "); Serial.print(i); Serial.print(" Addresses: "); Serial.println(num);
     if (address < num) {
-      Serial.print("Found index "); Serial.print(i); Serial.print(" pos "); Serial.println(address);
+      // Serial.print("Found index "); Serial.print(i); Serial.print(" pos "); Serial.println(address);
       position = address;
       return i;
     }
@@ -409,23 +414,18 @@ int findSignalIndex(int address, int& position) {
   return -1;
 }
 
-void notifyDccAccState (uint16_t Addr, uint16_t BoardAddr, uint8_t OutputAddr, uint8_t State) {
-  Serial.println("DCC turnout");
-}
-
 void notifyDccAccTurnoutOutput(uint16_t Addr, uint8_t Direction, uint8_t OutputPower) {
-  Serial.println("DCC turnout");
+  // Serial.println("DCC turnout");
   if (rocoAddress) {
     Addr = Addr + 4;
   }
-  Serial.print("Addr = "); Serial.println(Addr);
-  Serial.print("Min = "); Serial.println(thisDecoderAddress);
-  Serial.print("Max = "); Serial.println(maxDecoderAddress);
+  // Serial.print("Addr = "); Serial.println(Addr);
+  // Serial.print("Min = "); Serial.println(thisDecoderAddress);
+  // Serial.print("Max = "); Serial.println(maxDecoderAddress);
   if ((Addr < thisDecoderAddress)
       || (Addr >= maxDecoderAddress)) {
     return;
   }
-
 
   uint16_t idx = Addr - thisDecoderAddress;
   int pos;
@@ -547,14 +547,14 @@ void setFactoryDefault() {
   }
 
   // define CVs based on the predefined templates:
-  Serial.print(F("pgmIndex base ")); Serial.println((int)factorySignalMastOutputs, HEX);
-  Serial.print(F(" count ")); Serial.println(sizeof(factorySignalMastOutputs) / sizeof(factorySignalMastOutputs[0]));
+  // Serial.print(F("pgmIndex base ")); Serial.println((int)factorySignalMastOutputs, HEX);
+  // Serial.print(F(" count ")); Serial.println(sizeof(factorySignalMastOutputs) / sizeof(factorySignalMastOutputs[0]));
   for (int mast = 0; mast < sizeof(factorySignalMastOutputs) / sizeof(factorySignalMastOutputs[0]); mast++) {
     const MastSettings& settingsDef = factorySignalMastOutputs[mast];
     int cvBase = (sizeof(MastSettings) * mast) + START_CV_OUTPUT;
 
-    Serial.print(F("pgmIndex for mast ")); Serial.print(mast); Serial.print(F(" = ")); Serial.println((int)(&settingsDef), HEX);
-    Serial.print(F("cvBase for mast ")); Serial.print(mast); Serial.print(F(" = ")); Serial.println(cvBase);
+    // Serial.print(F("pgmIndex for mast ")); Serial.print(mast); Serial.print(F(" = ")); Serial.println((int)(&settingsDef), HEX);
+    // Serial.print(F("cvBase for mast ")); Serial.print(mast); Serial.print(F(" = ")); Serial.println(cvBase);
     int pgmIndex = (int)(&settingsDef.signalSetOrMastType);
     
     byte signalSetOrMastType = pgm_read_byte_near(pgmIndex);
@@ -706,7 +706,7 @@ int findNextLight(int mast) {
   byte type;
   do {
     cvStart = START_CV_OUTPUT + prevMast * SEGMENT_SIZE;
-    Serial.print(F("cvStart ")); Serial.println(cvStart);
+    //Serial.print(F("cvStart ")); Serial.println(cvStart);
     type = Dcc.getCV(cvStart + maxOutputsPerMast);    
     if (type > 0) {
       break;
@@ -717,7 +717,7 @@ int findNextLight(int mast) {
     return 1;
   }
   int max = -1;
-  Serial.print(F("Searching from ")); Serial.println(cvStart);
+  //Serial.print(F("Searching from ")); Serial.println(cvStart);
   for (int i = cvStart; i < cvStart + maxOutputsPerMast; i++) {
     int x = Dcc.getCV(i);
     if (x == ONA || x > NUM_OUTPUTS) {
@@ -747,7 +747,7 @@ void saveTemplateOutputsToCVs(const struct MastTypeDefinition& def, int mastInde
   int cvIndex = (sizeof(MastSettings) * mastIndex) + START_CV_OUTPUT;
   for (int i = 0; i < sizeof(def.outputs); i++) {
     byte n = def.outputs[i];
-    if (n != 0 && n <= NUM_OUTPUTS) {
+    if (n != ONA && n != 0 && n <= NUM_OUTPUTS) {
       n += from;
       n--;
       lc++;
@@ -775,12 +775,12 @@ int reassignMastOutputs(int mastIndex, int from, boolean propagate) {
     for (nextMast = mastIndex + 1; nextMast < NUM_SIGNAL_MAST; nextMast++) {
       int cvStart = START_CV_OUTPUT + nextMast * SEGMENT_SIZE;
       byte type = Dcc.getCV(cvStart + maxOutputsPerMast);
-      Serial.print("Next mast: "); Serial.print(nextMast); Serial.print(" type "); Serial.println(type, HEX);
+      //Serial.print("Next mast: "); Serial.print(nextMast); Serial.print(" type "); Serial.println(type, HEX);
       if (type == 0) {
         continue;
       }
       int min = findMinLightIndex(nextMast);
-      Serial.print("minLight: "); Serial.print(min);  Serial.print(" nextInput "); Serial.println(nextInput);
+      //Serial.print("minLight: "); Serial.print(min);  Serial.print(" nextInput "); Serial.println(nextInput);
       if (min == nextInput) {
         return -1;
       }
@@ -802,7 +802,7 @@ int reassignMastOutputs2(int mastIndex, int from) {
 
   for (int i = 0; i < sizeof(MastSettings::outputs); i++) {
     byte n = Dcc.getCV(cvIndex);
-    if (n > 0 && n <= NUM_OUTPUTS) {
+    if (n > 0 && n != ONA && n <= NUM_OUTPUTS) {
       n = (n - minLightNumber) + from;
       Dcc.setCV(cvIndex, n);
       lastOutput = n;
@@ -824,6 +824,7 @@ void maybeInitLocalVariables() {
   if (!reinitializeLocalVariables) {
     return;
   }
+  Serial.println("Reinitializing...");
   reinitializeLocalVariables = false;
   lsb = Dcc.getCV(CV_ACCESSORY_DECODER_ADDRESS_LSB);
   msb = Dcc.getCV(CV_ACCESSORY_DECODER_ADDRESS_MSB);
@@ -852,7 +853,7 @@ void initializeFadeTime() {
 }
 
 uint8_t recordOutput(byte* bitmap, uint8_t output) {
-  if (output >= NUM_OUTPUTS) {
+  if (output < 1 || output == ONA || output >= NUM_OUTPUTS) {
     return 0;
   }
   uint8_t o = output - 1;
@@ -917,7 +918,9 @@ void initLocalVariablesSignalMast() {
     for (int i = 0; i < NUM_OUTPUTS; i++) {
       boolean used = bitRead(usedOutputs[i / 8], i % 8);
       if (!used) {
+#ifdef Shift
         ShiftPWM.SetOne(numberToPhysOutput(i), 0);
+#endif        
       }
     }
   }
@@ -982,7 +985,7 @@ void processOutputLight(byte nrOutput) {
 }
 
 void changeLightState2(byte lightOutput, struct LightFunction newState) {
-  if (lightOutput == 0 || lightOutput > NUM_OUTPUTS) {
+  if (lightOutput == 0 || lightOutput == ONA || lightOutput > NUM_OUTPUTS) {
     return;
   }
   lightOutput--;
@@ -1036,7 +1039,9 @@ void setPWM(byte nrOutput, byte level) {
   if (b) {
     return;
   }
+#ifdef Shift
   ShiftPWM.SetOne(numberToPhysOutput(nrOutput), level);
+#endif
 }
 
 void processBulbBlinking(byte nrOutput, int blinkDelay) {
@@ -1385,11 +1390,7 @@ void notifyCVAck() {
  * CV was changed.
  */
 void notifyCVChange(uint16_t CV, uint8_t Value) {
-  Serial.print(F("CV changed: "));
-  Serial.print(CV);
-  Serial.print(F(" := "));
-  Serial.println(Value);
-
+  return;
   if (CV >= START_CV_OUTPUT && CV <= END_CV_OUTPUT) {
     int diff = CV - START_CV_OUTPUT;
     if ((diff % SEGMENT_SIZE) == maxOutputsPerMast) {
@@ -1413,10 +1414,12 @@ void notifyCVChange(uint16_t CV, uint8_t Value) {
 }
 
 void notifyDccCVChange(uint16_t CV, uint8_t Value) {
+  /*
   Serial.print(F("DCC CV changed: "));
   Serial.print(CV);
   Serial.print(F(" := "));
   Serial.println(Value);
+  */
   if (CV == CV_ACCESSORY_DECODER_ADDRESS_LSB) {
     lsb = Value;
     thisDecoderAddress = (msb << 8) | lsb;
