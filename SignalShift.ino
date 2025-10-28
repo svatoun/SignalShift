@@ -415,7 +415,7 @@ int findSignalIndex(int address, int& position) {
 }
 
 void notifyDccAccTurnoutOutput(uint16_t Addr, uint8_t Direction, uint8_t OutputPower) {
-  // Serial.println("DCC turnout");
+  Serial.println("DCC turnout");
   if (rocoAddress) {
     Addr = Addr + 4;
   }
@@ -729,6 +729,20 @@ int findNextLight(int mast) {
   }
   return max < 0 ? -1 : max + 1;
 }
+
+void saveTemplateAspectsToCVs(int mast, int signalSetOrMastType) {
+  Serial.print(F("Using template aspects for mast ")); Serial.println(mast);
+
+  const struct MastTypeDefinition& def = copySignalMastTypeDefinition(toTemplateIndex(signalSetOrMastType));
+
+  printByteBuffer((byte*)&def.code2Aspect, sizeof(def.code2Aspect)); Serial.println();
+
+  int cv = START_CV_ASPECT_TABLE + mast * maxAspects;
+  for (int i = 0; i < sizeof(def.code2Aspect); i++) {
+    Dcc.setCV(cv, def.code2Aspect[i]);
+    cv++;
+  }
+}  
 
 void saveTemplateOutputsToCVs(const struct MastTypeDefinition& def, int mastIndex, boolean stable) {
   Serial.print(F("Setting outputs to mast #")); Serial.print(mastIndex); Serial.print(F(" from def ")); Serial.println((int)(int*)(&def), HEX);

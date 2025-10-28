@@ -397,7 +397,7 @@ void commandDefineMast() {
     return;
   }
 
-  byte mastType = -1;
+  int mastType = -1;
 
   int mode = -1;
   switch (*inputPos) {
@@ -465,7 +465,7 @@ void commandDefineMast() {
 
       if (strcmp(buffer, s) == 0) {
         mastType = usesCodes | mode | id;
-        Serial.print("Found id: "); Serial.println(mastType);
+        Serial.print("Found id: "); Serial.print(id); Serial.print(" mode "); Serial.println(mode);
         break;
       }
     }
@@ -513,10 +513,13 @@ void commandDefineMast() {
     numSignals = def.codeCount;
     numLights = def.lightCount;
     defSignal = def.defaultCode;
+    Serial.print("Copying from template ");
+    Serial.println(toTemplateIndex(mastType));
+    Serial.print("signals: "); Serial.print(numSignals); Serial.print(" lights: "); Serial.print(numLights); Serial.print(" default: "); Serial.println(defSignal);
     saveTemplateOutputsToCVs(def, (nMast - 1), firstOut);
-
+    saveTemplateAspectsToCVs(nMast - 1, mastType);
       // the signal set number
-    Dcc.setCV(cvBase + 10, mastType);
+    Dcc.setCV(cvBase + 10, mastType & 0xff);
   }
   
   bits = findRequiredAddrCount(numSignals, mode);
@@ -560,8 +563,34 @@ void commandGetCV() {
     Serial.println(F("Invalid CV number"));
     return;
   }
-  int val = Dcc.getCV(cv);
-  Serial.print(F(" CV #")); Serial.print(cv); Serial.print(F(" = ")); Serial.println(val);
+  int lastCV = nextNumber();
+  if (lastCV < 0) {
+    int val = Dcc.getCV(cv);
+    Serial.print(F(" CV #")); Serial.print(cv); Serial.print(F(" = ")); Serial.println(val);
+    return;
+  }
+  while (cv <= lastCV) {
+    if (cv < 0x10) {
+      Serial.print("00");
+    } else if (cv < 0x100) {
+      Serial.print("0");
+    }
+    Serial.print(cv, HEX);
+    Serial.print(": ");
+    for (int a = 0; a < 16; a++) {
+      if (cv > lastCV) {
+        break;
+      }
+      int val = Dcc.getCV(cv);
+      cv++;
+      if (val < 0x0f) {
+        Serial.print("0");
+      }
+      Serial.print(val, HEX);
+      Serial.print(" ");
+    }
+    Serial.println();
+  }
 }
 
 void commandSetCV() {
@@ -796,12 +825,14 @@ void commandOverride() {
       return;
   }
   for (int i = n - 1; i < to; i++) {
-    if (level < 0) {
+    if (level <= 0) {
+      Serial.print("Disable output: "); Serial.println(i);
       bitWrite(overrides[i / 8], i & 0x07, false);
-//      ShiftPWM.SetOne(numberToPhysOutput(i), 0);
+      ShiftPWM.SetOne(numberToPhysOutput(i), 0);
     } else {
+      Serial.print("Set output: "); Serial.print(i); Serial.print(" to "); Serial.println(level);
       bitWrite(overrides[i / 8], i & 0x07, true);
-//      ShiftPWM.SetOne(numberToPhysOutput(i), level);
+      ShiftPWM.SetOne(numberToPhysOutput(i), level);
     }
   }
 }
